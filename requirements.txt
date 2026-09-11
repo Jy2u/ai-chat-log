@@ -1,0 +1,3 @@
+PySide6
+markdown-it-py
+pygments

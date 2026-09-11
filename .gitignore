@@ -1,0 +1,23 @@
+# 个人数据：会话 / 待办 / 导图 / 文档
+data/chatlog.db
+data/chatlog.db-*
+
+# 聊天图片
+data/images/
+
+# 运行时缓存与崩溃日志
+data/view.html
+data/last_error.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# 系统杂项
+Thumbs.db
+Desktop.ini
+.DS_Store
