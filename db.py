@@ -81,7 +81,9 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
                 pos_x REAL,
                 pos_y REAL,
                 edge_label TEXT NOT NULL DEFAULT '',
-                highlighted INTEGER NOT NULL DEFAULT 0
+                highlighted INTEGER NOT NULL DEFAULT 0,
+                box_w REAL,
+                box_h REAL
             );
             CREATE INDEX IF NOT EXISTS idx_mindmap_nodes_map
                 ON mindmap_nodes(mindmap_id);
@@ -140,6 +142,9 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
                 "ALTER TABLE mindmap_nodes ADD COLUMN"
                 " highlighted INTEGER NOT NULL DEFAULT 0"
             )
+        if "box_w" not in map_cols:
+            self.conn.execute("ALTER TABLE mindmap_nodes ADD COLUMN box_w REAL")
+            self.conn.execute("ALTER TABLE mindmap_nodes ADD COLUMN box_h REAL")
         self.conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS mindmap_edges (
@@ -174,6 +179,7 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
         self._migrate_deleted_at()
         self._migrate_match_color()
         self._ensure_todos_table()
+        self._ensure_stash_table()
         self.conn.commit()
 
     def _table_cols(self, table: str) -> list:
@@ -210,6 +216,24 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
         if "mark" not in self._table_cols("todos"):
             self.conn.execute(
                 "ALTER TABLE todos ADD COLUMN mark TEXT NOT NULL DEFAULT ''"
+            )
+
+    def _ensure_stash_table(self):
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stash (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL DEFAULT 'key',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        if "kind" not in self._table_cols("stash"):
+            self.conn.execute(
+                "ALTER TABLE stash ADD COLUMN kind TEXT NOT NULL DEFAULT 'key'"
             )
 
     def _migrate_subjects(self):
@@ -1104,6 +1128,57 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
 
     def delete_todo(self, todo_id: int):
         self.conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+        self.conn.commit()
+
+    # ---------- 常用（密钥 / 账号 / 提示词）----------
+
+    def list_stash(self, kind: str = None) -> list:
+        sql = """
+            SELECT id, title, body, kind, sort_order, created_at
+            FROM stash
+        """
+        params = []
+        if kind:
+            sql += " WHERE kind = ?"
+            params.append(kind)
+        sql += " ORDER BY sort_order ASC, id DESC"
+        rows = self.conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_stash(self, title: str, kind: str = "key") -> int:
+        title = (title or "").strip()
+        if not title:
+            return 0
+        if kind not in ("key", "account", "prompt"):
+            kind = "key"
+        order = self._front_sort("stash")
+        cur = self.conn.execute(
+            "INSERT INTO stash (title, body, kind, sort_order, created_at)"
+            " VALUES (?, '', ?, ?, ?)",
+            (title, kind, order, _now()),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def set_stash_title(self, stash_id: int, title: str):
+        title = (title or "").strip()
+        if not title:
+            return
+        self.conn.execute(
+            "UPDATE stash SET title = ?, body = '' WHERE id = ?",
+            (title, stash_id),
+        )
+        self.conn.commit()
+
+    def set_stash_body(self, stash_id: int, body: str):
+        self.conn.execute(
+            "UPDATE stash SET body = ? WHERE id = ?",
+            ((body or "").strip(), stash_id),
+        )
+        self.conn.commit()
+
+    def delete_stash(self, stash_id: int):
+        self.conn.execute("DELETE FROM stash WHERE id = ?", (stash_id,))
         self.conn.commit()
 
     def backup_to(self, dest_path: str):

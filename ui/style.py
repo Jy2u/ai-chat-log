@@ -277,22 +277,22 @@ QMenu::separator {
     font-size: 11px; color: #3a4152;
 }
 #todoMark {
-    font-size: 11px; font-weight: 600;
-    padding: 5px 10px;
-    border-radius: 11px;
+    font-size: 10px; font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.72);
     border-top: 1px solid rgba(255, 255, 255, 0.95);
 }
 #todoMark[kind="later"] {
     color: #b85a00;
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(255, 186, 110, 0.42), stop:1 rgba(255, 154, 61, 0.28));
+        stop:0 rgba(255, 186, 110, 0.5), stop:1 rgba(255, 154, 61, 0.32));
     border-color: rgba(255, 255, 255, 0.7);
 }
 #todoMark[kind="skip"] {
     color: #6a6170;
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(220, 214, 228, 0.5), stop:1 rgba(186, 178, 196, 0.32));
+        stop:0 rgba(220, 214, 228, 0.55), stop:1 rgba(186, 178, 196, 0.36));
     border-color: rgba(255, 255, 255, 0.7);
 }
 #todoRow[mark="skip"] #todoText,
@@ -335,7 +335,9 @@ QMenu::separator {
     color: #8b94ad;
     background: rgba(255, 255, 255, 0.22);
 }
+QToolButton::menu-indicator { image: none; width: 0; height: 0; }
 #todoCheck {
+    min-width: 22px; max-width: 22px;
     width: 22px; height: 22px;
     background: rgba(255, 255, 255, 0.55);
     border: 1.5px solid rgba(130, 145, 190, 0.45);
@@ -361,6 +363,46 @@ QMenu::separator {
 #todoDelete:hover {
     color: #e5484d;
     background: rgba(229, 72, 77, 0.12);
+}
+#stashCopy {
+    background: transparent; border: none;
+    color: #5b6aa8; font-size: 11px; padding: 2px 6px;
+    border-radius: 8px;
+}
+#stashCopy:hover {
+    color: #4a63f0;
+    background: rgba(79, 110, 247, 0.12);
+}
+#stashSplit::handle {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(255, 255, 255, 0),
+        stop:0.5 rgba(255, 255, 255, 0.55),
+        stop:1 rgba(255, 255, 255, 0));
+}
+#stashBar { background: transparent; border: none; }
+#stashNav {
+    background: rgba(255, 255, 255, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0.68);
+    border-top: 1px solid rgba(255, 255, 255, 0.92);
+    border-radius: 16px;
+}
+#stashNavBtn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    color: #5a647c;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 4px 6px;
+}
+#stashNavBtn:hover {
+    background: rgba(255, 255, 255, 0.55);
+    color: #3a4152;
+}
+#stashNavBtn:checked {
+    background: rgba(255, 255, 255, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    color: #4a63f0;
 }
 
 QScrollBar:vertical { background: transparent; width: 9px; margin: 2px; }

@@ -126,8 +126,8 @@ class MindmapMixin:
             cur = self.conn.execute(
                 "INSERT INTO mindmap_nodes"
                 " (mindmap_id, parent_id, kind, content, sort_order,"
-                " pos_x, pos_y, edge_label, highlighted)"
-                " VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)",
+                " pos_x, pos_y, edge_label, highlighted, box_w, box_h)"
+                " VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     new_mid,
                     n["kind"],
@@ -137,6 +137,8 @@ class MindmapMixin:
                     n.get("pos_y"),
                     n.get("edge_label") or "",
                     1 if n.get("highlighted") else 0,
+                    n.get("box_w"),
+                    n.get("box_h"),
                 ),
             )
             id_map[n["id"]] = cur.lastrowid
@@ -164,7 +166,7 @@ class MindmapMixin:
         rows = self.conn.execute(
             """
             SELECT id, mindmap_id, parent_id, kind, content, sort_order,
-                   pos_x, pos_y, edge_label, highlighted
+                   pos_x, pos_y, edge_label, highlighted, box_w, box_h
             FROM mindmap_nodes WHERE mindmap_id = ?
             ORDER BY sort_order, id
             """,
@@ -175,7 +177,8 @@ class MindmapMixin:
     def get_mindmap_node(self, node_id: int):
         row = self.conn.execute(
             "SELECT id, mindmap_id, parent_id, kind, content, sort_order,"
-            " pos_x, pos_y, edge_label, highlighted FROM mindmap_nodes WHERE id = ?",
+            " pos_x, pos_y, edge_label, highlighted, box_w, box_h"
+            " FROM mindmap_nodes WHERE id = ?",
             (node_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -395,6 +398,14 @@ class MindmapMixin:
                 "UPDATE mindmap_nodes SET pos_x = ?, pos_y = ? WHERE id = ?",
                 (it["x"], it["y"], it["id"]),
             )
+        self.conn.commit()
+
+    def set_mindmap_box(self, node_id: int, x, y, w, h):
+        self.conn.execute(
+            "UPDATE mindmap_nodes"
+            " SET pos_x = ?, pos_y = ?, box_w = ?, box_h = ? WHERE id = ?",
+            (x, y, w, h, node_id),
+        )
         self.conn.commit()
 
     def _next_child_sort(self, parent_id: int) -> int:

@@ -208,6 +208,7 @@ class ViewMixin:
             return
         if action in (
             "addbox", "addtext", "savenode", "delnode", "delone", "setpos",
+            "setsize",
             "edgebox", "edgetext", "editedge", "deledge", "relink", "connect",
             "addfreebox", "addfreetext", "togglehl",
         ):
@@ -250,6 +251,19 @@ class ViewMixin:
                 return
             if items:
                 self._db.set_mindmap_positions(items)
+            return
+        if action == "setsize":
+            try:
+                box = json.loads(extra) if extra else {}
+                self._db.set_mindmap_box(
+                    node_id,
+                    float(box["x"]),
+                    float(box["y"]),
+                    float(box["w"]),
+                    float(box["h"]),
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return
             return
         if action in ("addfreebox", "addfreetext"):
             if self._current_mid is None:

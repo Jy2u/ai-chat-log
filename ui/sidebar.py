@@ -4,6 +4,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QFontMetrics
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -28,6 +29,7 @@ from ui.icons import (
     _make_map_icon,
     _make_subject_icon,
 )
+from ui.stash import StashPanel
 from ui.todo import TODO_PANEL_W, TodoPanel
 from ui.widgets import (
     ChatPage,
@@ -51,28 +53,10 @@ class SidebarMixin:
         bar.setIconSize(QSize(18, 18))
         self.addToolBar(bar)
 
-        act_new_subject = QAction("新建课题", self)
-        act_new_subject.triggered.connect(self.new_subject)
-        act_new = QAction("新建会话", self)
-        act_new.triggered.connect(lambda: self.new_session())
-        act_new_folder = QAction("新建文件夹", self)
-        act_new_folder.triggered.connect(self.new_folder)
-        act_export = QAction("导出 Markdown", self)
-        act_export.triggered.connect(self.export_session)
         act_backup = QAction("备份整个软件", self)
         act_backup.triggered.connect(self.backup_data)
         act_trash = QAction("回收站", self)
         act_trash.triggered.connect(self.open_trash)
-        act_map = QAction("新建思维导图", self)
-        act_map.triggered.connect(lambda: self.new_mindmap())
-        act_doc = QAction("新建文档", self)
-        act_doc.triggered.connect(lambda: self.new_document())
-        bar.addAction(act_new_subject)
-        bar.addAction(act_new)
-        bar.addAction(act_new_folder)
-        bar.addAction(act_map)
-        bar.addAction(act_doc)
-        bar.addAction(act_export)
         bar.addAction(act_backup)
         bar.addAction(act_trash)
         act_md = QAction("markdown语法", self)
@@ -260,13 +244,26 @@ class SidebarMixin:
         self._todo_panel = TodoPanel(self._db)
         self._todo_panel.setFixedWidth(TODO_PANEL_W)
 
-        root = QWidget()
-        root_lay = QHBoxLayout(root)
-        root_lay.setContentsMargins(0, 0, 0, 0)
-        root_lay.setSpacing(0)
-        root_lay.addWidget(split, 1)
-        root_lay.addWidget(todo_divider, 0)
-        root_lay.addWidget(self._todo_panel, 0)
+        main = QWidget()
+        main_lay = QHBoxLayout(main)
+        main_lay.setContentsMargins(0, 0, 0, 0)
+        main_lay.setSpacing(0)
+        main_lay.addWidget(split, 1)
+        main_lay.addWidget(todo_divider, 0)
+        main_lay.addWidget(self._todo_panel, 0)
+
+        self._stash_panel = StashPanel(self._db)
+        self._stash_panel.copied.connect(self._on_stash_copied)
+
+        root = QSplitter(Qt.Vertical)
+        root.setObjectName("stashSplit")
+        root.setChildrenCollapsible(False)
+        root.setHandleWidth(8)
+        root.addWidget(main)
+        root.addWidget(self._stash_panel)
+        root.setStretchFactor(0, 1)
+        root.setStretchFactor(1, 0)
+        root.setSizes([640, 168])
         self.setCentralWidget(root)
         self._sidebar_collapsed = False
         if self._sidebar_user_sized:
@@ -350,6 +347,12 @@ class SidebarMixin:
         if saved_w > side_w:
             side_w = saved_w
         return sw, fw, side_w
+
+    def _on_stash_copied(self, text: str):
+        if self._suppress_cb:
+            self._suppress_cb()
+        QApplication.clipboard().setText(text)
+        self._status.setText("已复制到剪贴板")
 
     def _todo_reserved_width(self) -> int:
         panel = getattr(self, "_todo_panel", None)

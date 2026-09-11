@@ -17,6 +17,9 @@ __pycache__/
 .venv/
 venv/
 
+# 自己看的推送备忘，不进仓库
+github.md
+
 # 系统杂项
 Thumbs.db
 Desktop.ini

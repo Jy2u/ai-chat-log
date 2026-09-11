@@ -400,6 +400,19 @@ body.mm-relink .mm-handle { cursor: grabbing; }
     cursor: crosshair; display: none;
 }
 .mm-port.on { display: block; }
+.mm-resize {
+    position: absolute; z-index: 8;
+    width: 10px; height: 10px; margin: -5px 0 0 -5px;
+    border-radius: 2px;
+    background: #fff;
+    border: 2px solid #4a63f0;
+    box-shadow: 0 0 0 3px rgba(74, 99, 240, .22);
+    display: none;
+}
+.mm-resize.on { display: block; }
+.mm-resize[data-corner="nw"], .mm-resize[data-corner="se"] { cursor: nwse-resize; }
+.mm-resize[data-corner="ne"], .mm-resize[data-corner="sw"] { cursor: nesw-resize; }
+.mm-node.mm-sized { overflow: auto; }
 .mm-draw-line {
     fill: none; stroke: #4a63f0; stroke-width: 2;
     stroke-dasharray: 6 4; pointer-events: none;
@@ -439,6 +452,10 @@ body.mm-relink .mm-handle { cursor: grabbing; }
     align-items: center;
     justify-content: center;
 }
+.mm-node.mm-prose {
+    align-items: stretch;
+    justify-content: flex-start;
+}
 .mm-node.root {
     background: rgba(118, 142, 255, .22);
     border-color: rgba(255, 255, 255, .9);
@@ -465,6 +482,11 @@ body.mm-relink .mm-handle { cursor: grabbing; }
     font-weight: 600; text-align: center; width: 100%;
     display: block;
 }
+.mm-node.mm-prose .mm-body {
+    text-align: left;
+    font-weight: 500;
+}
+.mm-node.root.mm-prose .mm-body { font-weight: bold; }
 .mm-node.root .mm-body { font-weight: bold; font-size: 15px; }
 .mm-node.text .mm-body { font-weight: normal; }
 .mm-body .tex-inline, .mm-body .tex-display, .mm-body .katex,

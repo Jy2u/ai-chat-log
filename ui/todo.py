@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QToolButton,
@@ -98,7 +99,6 @@ class TodoRow(QFrame):
         self.setProperty("done", "true" if done else "false")
         self.setProperty("mark", self._mark_kind)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("单击添加备注 · 右键标记延后或不做了")
         self.setContextMenuPolicy(Qt.DefaultContextMenu)
 
         self._mark = QLabel()
@@ -106,14 +106,17 @@ class TodoRow(QFrame):
         self._mark.setAlignment(Qt.AlignCenter)
         self._mark.setAttribute(Qt.WA_StyledBackground, True)
         self._mark.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._mark.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-        self._check = QToolButton()
+        self._suppress_edit = False
+        self._check = QPushButton()
         self._check.setObjectName("todoCheck")
         self._check.setCheckable(True)
         self._check.setChecked(done)
         self._check.setText("✓" if done else "")
         self._check.setFixedSize(22, 22)
-        self._check.setToolTip("勾选标记完成")
+        self._check.setFlat(True)
+        self._check.setFocusPolicy(Qt.NoFocus)
         self._check.setCursor(Qt.PointingHandCursor)
         self._check.toggled.connect(self._on_check)
 
@@ -137,37 +140,40 @@ class TodoRow(QFrame):
         self._note_edit.editingFinished.connect(self._finish_note)
         self._note_edit.installEventFilter(self)
 
+        title = QHBoxLayout()
+        title.setContentsMargins(0, 0, 0, 0)
+        title.setSpacing(6)
+        title.addWidget(self._text, 1)
+        title.addWidget(self._mark, 0, Qt.AlignTop)
+
         body = QVBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(2)
-        body.addWidget(self._text)
+        body.addLayout(title)
         body.addWidget(self._note)
         body.addWidget(self._note_edit)
 
         btn = QToolButton()
         btn.setObjectName("todoDelete")
         btn.setText("×")
-        btn.setToolTip("删除")
         btn.setAutoRaise(True)
         btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(lambda: self.removed.emit(self.todo_id))
         self._delete = btn
 
-        content = QHBoxLayout()
-        content.setContentsMargins(0, 0, 0, 0)
-        content.setSpacing(8)
-        content.addWidget(self._check, 0, Qt.AlignTop)
-        content.addLayout(body, 1)
-        content.addWidget(btn, 0, Qt.AlignTop)
-
-        lay = QVBoxLayout(self)
+        lay = QHBoxLayout(self)
         lay.setContentsMargins(8, 8, 6, 8)
-        lay.setSpacing(6)
-        lay.addWidget(self._mark)
-        lay.addLayout(content)
+        lay.setSpacing(8)
+        lay.addWidget(self._check, 0, Qt.AlignTop)
+        lay.addLayout(body, 1)
+        lay.addWidget(btn, 0, Qt.AlignTop)
         self._apply_mark(self._mark_kind, emit=False)
 
     def mouseReleaseEvent(self, ev):
+        if self._suppress_edit:
+            self._suppress_edit = False
+            ev.accept()
+            return
         if ev.button() == Qt.LeftButton and not self._hit_chrome(ev):
             self._begin_edit()
             ev.accept()
@@ -263,6 +269,7 @@ class TodoRow(QFrame):
             self.mark_changed.emit(self.todo_id, kind)
 
     def _on_check(self, on: bool):
+        self._suppress_edit = True
         self._check.setText("✓" if on else "")
         self.setProperty("done", "true" if on else "false")
         self.style().unpolish(self)
@@ -402,7 +409,6 @@ class TodoPanel(QFrame):
 
     def _toggle(self, todo_id: int, done: bool):
         self._db.set_todo_done(todo_id, done)
-        self.reload()
 
     def _remove(self, todo_id: int):
         self._db.delete_todo(todo_id)

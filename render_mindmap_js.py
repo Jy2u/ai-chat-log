@@ -23,6 +23,21 @@ _MM_JS = r"""
 
     function hideMenu() { menu.hidden = true; }
 
+    function nodeIsProse(text) {
+        text = (text || "").replace(/\s+$/g, "");
+        if (!text) return false;
+        if (text.indexOf("\n") >= 0) return true;
+        return text.length > 32;
+    }
+    function syncNodeProse(node) {
+        var body = node.querySelector(".mm-body");
+        var raw = node.getAttribute("data-raw");
+        var text = (body && body.isContentEditable)
+            ? (body.innerText || "")
+            : (raw === null ? ((body && body.innerText) || "") : raw);
+        node.classList.toggle("mm-prose", nodeIsProse(text));
+    }
+
     function applyView() {
         var pan = document.querySelector(".mm-pan");
         var canvas = document.querySelector(".mm-canvas");
@@ -63,6 +78,7 @@ _MM_JS = r"""
     var selectedNodeId = null;
     var portLeft = null;
     var portRight = null;
+    var resizeHandles = [];
     var linking = null;
     var drawPath = null;
 
@@ -114,6 +130,7 @@ _MM_JS = r"""
         });
         if (portLeft) portLeft.classList.remove("on");
         if (portRight) portRight.classList.remove("on");
+        resizeHandles.forEach(function (h) { h.classList.remove("on"); });
     }
 
     function selectNode(el) {
@@ -147,6 +164,7 @@ _MM_JS = r"""
         if (!portLeft || !portRight || !selectedNodeId) {
             if (portLeft) portLeft.classList.remove("on");
             if (portRight) portRight.classList.remove("on");
+            updateResizers(null);
             return;
         }
         var el = document.querySelector('.mm-node[data-id="' + selectedNodeId + '"]');
@@ -159,6 +177,99 @@ _MM_JS = r"""
         portRight.style.top = R.y + "px";
         portLeft.classList.add("on");
         portRight.classList.add("on");
+        updateResizers(el);
+    }
+
+    function updateResizers(el) {
+        if (!resizeHandles.length) return;
+        if (!el) {
+            resizeHandles.forEach(function (h) { h.classList.remove("on"); });
+            return;
+        }
+        var x = parseFloat(el.style.left) || 0;
+        var y = parseFloat(el.style.top) || 0;
+        var w = el.offsetWidth;
+        var h = el.offsetHeight;
+        var pos = {
+            nw: [x, y],
+            ne: [x + w, y],
+            sw: [x, y + h],
+            se: [x + w, y + h]
+        };
+        resizeHandles.forEach(function (handle) {
+            var c = handle.getAttribute("data-corner");
+            var p = pos[c];
+            if (!p) return;
+            handle.style.left = p[0] + "px";
+            handle.style.top = p[1] + "px";
+            handle.classList.add("on");
+        });
+    }
+
+    function beginResize(corner, e) {
+        if (!selectedNodeId) return;
+        var el = document.querySelector('.mm-node[data-id="' + selectedNodeId + '"]');
+        if (!el) return;
+        e.preventDefault();
+        e.stopPropagation();
+        hideMenu();
+        var start = worldPos(e);
+        var x0 = parseFloat(el.style.left) || 0;
+        var y0 = parseFloat(el.style.top) || 0;
+        var w0 = el.offsetWidth;
+        var h0 = el.offsetHeight;
+        var minW = el.classList.contains("text") ? 80 : 100;
+        var minH = 36;
+        var maxW = 900;
+        var maxH = 1400;
+        function move(ev) {
+            var p = worldPos(ev);
+            var dx = p.x - start.x;
+            var dy = p.y - start.y;
+            var x = x0, y = y0, w = w0, h = h0;
+            if (corner.indexOf("e") >= 0) w = w0 + dx;
+            if (corner.indexOf("s") >= 0) h = h0 + dy;
+            if (corner.indexOf("w") >= 0) { w = w0 - dx; x = x0 + dx; }
+            if (corner.indexOf("n") >= 0) { h = h0 - dy; y = y0 + dy; }
+            if (w < minW) {
+                if (corner.indexOf("w") >= 0) x -= (minW - w);
+                w = minW;
+            }
+            if (w > maxW) {
+                if (corner.indexOf("w") >= 0) x += (w - maxW);
+                w = maxW;
+            }
+            if (h < minH) {
+                if (corner.indexOf("n") >= 0) y -= (minH - h);
+                h = minH;
+            }
+            if (h > maxH) {
+                if (corner.indexOf("n") >= 0) y += (h - maxH);
+                h = maxH;
+            }
+            el.style.left = x + "px";
+            el.style.top = y + "px";
+            el.style.width = w + "px";
+            el.style.height = h + "px";
+            el.style.minHeight = h + "px";
+            el.classList.add("mm-sized");
+            updateLines();
+        }
+        function up() {
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+            ignoreClick = true;
+            setTimeout(function () { ignoreClick = false; }, 50);
+            location.href = "app://setsize/" + selectedNodeId + "#" +
+                encodeURIComponent(JSON.stringify({
+                    x: parseFloat(el.style.left) || 0,
+                    y: parseFloat(el.style.top) || 0,
+                    w: el.offsetWidth,
+                    h: el.offsetHeight
+                }));
+        }
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
     }
 
     function cancelLink() {
@@ -463,7 +574,7 @@ _MM_JS = r"""
     document.addEventListener("click", function (e) {
         hideMenu();
         if (ignoreClick) return;
-        if (e.target.closest(".mm-handle, .mm-port, .mm-menu")) return;
+        if (e.target.closest(".mm-handle, .mm-port, .mm-resize, .mm-menu")) return;
         if (linking) {
             var hit = e.target.closest(".mm-node");
             if (hit) finishLink(hit);
@@ -555,6 +666,7 @@ _MM_JS = r"""
 
     document.querySelectorAll(".mm-node").forEach(function (node) {
         var body = node.querySelector(".mm-body");
+        syncNodeProse(node);
         node.addEventListener("dblclick", function (e) {
             if (dragMoved) { e.preventDefault(); return; }
             e.preventDefault();
@@ -570,6 +682,7 @@ _MM_JS = r"""
             sel.addRange(range);
         });
         body.addEventListener("input", function () {
+            syncNodeProse(node);
             updateLines();
         });
         body.addEventListener("blur", function () {
@@ -633,6 +746,17 @@ _MM_JS = r"""
         portRight.setAttribute("data-side", "right");
         canvas.appendChild(portLeft);
         canvas.appendChild(portRight);
+        ["nw", "ne", "sw", "se"].forEach(function (corner) {
+            var handle = document.createElement("div");
+            handle.className = "mm-resize";
+            handle.setAttribute("data-corner", corner);
+            canvas.appendChild(handle);
+            handle.addEventListener("mousedown", function (e) {
+                if (e.button !== 0) return;
+                beginResize(corner, e);
+            });
+            resizeHandles.push(handle);
+        });
         var svg = canvas.querySelector(".mm-lines");
         if (svg) {
             drawPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -745,7 +869,7 @@ _MM_JS = r"""
         viewport.addEventListener("mousedown", function (e) {
             if (e.button !== 0) return;
             if (boxing) return;
-            if (e.target.closest(".mm-node, .mm-menu, .mm-edge, .mm-edge-label, .mm-handle, .mm-port")) return;
+            if (e.target.closest(".mm-node, .mm-menu, .mm-edge, .mm-edge-label, .mm-handle, .mm-port, .mm-resize")) return;
             if (document.activeElement && document.activeElement.isContentEditable) return;
             panning = true;
             lastX = e.clientX;

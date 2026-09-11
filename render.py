@@ -138,6 +138,16 @@ def md_to_html(text: str) -> str:
     return _restore_math(_md.render(text), maths)
 
 
+def _node_is_prose(text: str) -> bool:
+    """多行或较长的节点用左对齐，短标题才居中。"""
+    raw = (text or "").rstrip()
+    if not raw:
+        return False
+    if "\n" in raw:
+        return True
+    return len(raw) > 32
+
+
 def node_content_html(text: str) -> str:
     """导图节点：转义正文，并把 \\( \\) / $ 公式变成 KaTeX 占位。"""
     raw = text or ""
@@ -479,17 +489,30 @@ def _mm_node_size(node):
     max_w = 300 if is_text else 280
     char_px = 14.0
     if not text.strip():
-        return min_w, pad_h + line_h
-    paras = text.split("\n")
-    longest = max(_mm_char_units(p) for p in paras)
-    w = int(min(max_w, max(min_w, longest * char_px + 36)))
-    cols = max(6.0, (w - 28) / char_px)
-    lines = 0
-    for para in paras:
-        u = _mm_char_units(para)
-        lines += max(1, int((u + cols - 1e-6) // cols))
-    lines = min(max(lines, 1), 40)
-    return w, pad_h + lines * line_h
+        w, h = min_w, pad_h + line_h
+    else:
+        paras = text.split("\n")
+        longest = max(_mm_char_units(p) for p in paras)
+        w = int(min(max_w, max(min_w, longest * char_px + 36)))
+        cols = max(6.0, (w - 28) / char_px)
+        lines = 0
+        for para in paras:
+            u = _mm_char_units(para)
+            lines += max(1, int((u + cols - 1e-6) // cols))
+        lines = min(max(lines, 1), 40)
+        h = pad_h + lines * line_h
+    bw, bh = node.get("box_w"), node.get("box_h")
+    try:
+        if bw is not None and float(bw) > 0:
+            w = max(80, int(round(float(bw))))
+    except (TypeError, ValueError):
+        pass
+    try:
+        if bh is not None and float(bh) > 0:
+            h = max(36, int(round(float(bh))))
+    except (TypeError, ValueError):
+        pass
+    return w, h
 
 
 def _has_pos(node) -> bool:
@@ -594,7 +617,7 @@ def prepare_mindmap_layout(nodes: list):
 def build_mindmap_page(mindmap: dict, nodes: list, view=None, edges=None):
     hint = (
         '<div class="mm-hint">右键空白：新建独立子框 / 子句 ·'
-        " 单击单元：两端出现连接点，点一点再点其他单元即可连线 ·"
+        " 单击单元：四角拖动改大小，两端连接点可连线 ·"
         " 右键节点：新建 / 高亮 / 删除 · 右键连线：插入节点、标注或删除连线 ·"
         " 左键点连线可选中拖端点 · 双击编辑 · 长按拖动节点 ·"
         " 中键拖动框选（框到的单元和连线都会选中，可一起拖动） ·"
@@ -671,14 +694,23 @@ def build_mindmap_page(mindmap: dict, nodes: list, view=None, edges=None):
         cls += " text" if n["kind"] == "text" else " box"
         if n.get("highlighted"):
             cls += " hl"
+        raw = n.get("content") or ""
+        if _node_is_prose(raw):
+            cls += " mm-prose"
+        sized = n.get("box_w") is not None and n.get("box_h") is not None
+        if sized:
+            cls += " mm-sized"
         nid = n["id"]
         parent_attr = "" if n["parent_id"] is None else str(n["parent_id"])
-        raw = n.get("content") or ""
+        size_css = (
+            f'width:{n["w"]:.0f}px;height:{n["h"]:.0f}px'
+            if sized
+            else f'width:{n["w"]:.0f}px;min-height:{n["h"]:.0f}px'
+        )
         cards.append(
             f'<div class="{cls}" data-id="{nid}" data-parent="{parent_attr}"'
             f' data-raw="{_attr_nl(raw)}"'
-            f' style="left:{n["x"]:.0f}px;top:{n["y"]:.0f}px;'
-            f'width:{n["w"]:.0f}px;min-height:{n["h"]:.0f}px">'
+            f' style="left:{n["x"]:.0f}px;top:{n["y"]:.0f}px;{size_css}">'
             f'<div class="mm-body">{node_content_html(raw)}</div></div>'
         )
     head = (
