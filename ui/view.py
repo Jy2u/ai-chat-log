@@ -54,7 +54,10 @@ class ViewMixin:
             return
         session = self._db.get_session(sid)
         messages = self._db.get_messages(sid)
-        self._write_and_load(render.build_chat_page(session, messages))
+        highlight = getattr(self, "_highlight_msg_id", None)
+        self._write_and_load(
+            render.build_chat_page(session, messages, highlight_id=highlight)
+        )
         self._web.setContextMenuPolicy(Qt.DefaultContextMenu)
         self._status.setText(
             f"会话「{session['name']}」 · {len(messages)} 条记录"
@@ -104,18 +107,27 @@ class ViewMixin:
         )
 
     def _write_and_load(self, html: str):
+        if html == getattr(self, "_loaded_html", None):
+            return
+        self._loaded_html = html
         os.makedirs(DATA_DIR, exist_ok=True)
         with open(VIEW_PATH, "w", encoding="utf-8") as f:
             f.write(html)
         self._web.load(QUrl.fromLocalFile(VIEW_PATH))
 
-    def notify_message_added(self):
-        """悬浮条存入新消息后由入口层调用。
-
-        reload_sessions 会重新选中当前会话并触发聊天视图刷新；
-        搜索模式下只更新会话列表的计数，不打断搜索结果页。
-        """
-        self.reload_sessions()
+    def notify_message_added(self, message_id=None, session_id=None):
+        """悬浮条存入新消息后由入口层调用：切到该会话并滚到刚加入的那条。"""
+        if self._search_mode:
+            self._exit_search_mode()
+        self._trash_mode = False
+        sid = session_id or self.current_session_id()
+        self._highlight_msg_id = message_id
+        self.reload_sessions(select_id=sid, select_kind="session")
+        self._highlight_msg_id = None
+        self.setWindowState(self.windowState() & ~Qt.WindowMinimized)
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     # ---------- 搜索 ----------
 
@@ -284,10 +296,17 @@ class ViewMixin:
             edge = self._db.get_mindmap_edge(node_id)
             if edge is None:
                 return
-            if action == "edgebox":
-                self._db.insert_mindmap_node_on_edge(node_id, "box")
-            elif action == "edgetext":
-                self._db.insert_mindmap_node_on_edge(node_id, "text")
+            if action in ("edgebox", "edgetext"):
+                try:
+                    payload = json.loads(extra) if extra else {}
+                    items = payload.get("positions") or []
+                except (TypeError, json.JSONDecodeError):
+                    items = []
+                if items:
+                    self._db.set_mindmap_positions(items)
+                self._db.insert_mindmap_node_on_edge(
+                    node_id, "box" if action == "edgebox" else "text"
+                )
             elif action == "editedge":
                 text, ok = QInputDialog.getText(
                     self,
@@ -333,10 +352,20 @@ class ViewMixin:
         node = self._db.get_mindmap_node(node_id)
         if node is None:
             return
-        if action == "addbox":
-            self._db.add_mindmap_node(node["mindmap_id"], node_id, "box", "")
-        elif action == "addtext":
-            self._db.add_mindmap_node(node["mindmap_id"], node_id, "text", "")
+        if action in ("addbox", "addtext"):
+            try:
+                payload = json.loads(extra) if extra else {}
+                items = payload.get("positions") or []
+            except (TypeError, json.JSONDecodeError):
+                items = []
+            if items:
+                self._db.set_mindmap_positions(items)
+            self._db.add_mindmap_node(
+                node["mindmap_id"],
+                node_id,
+                "box" if action == "addbox" else "text",
+                "",
+            )
         elif action == "togglehl":
             self._db.toggle_mindmap_highlight(node_id)
             self.reload_mindmap()

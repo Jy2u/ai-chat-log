@@ -44,6 +44,10 @@ ROLE_KIND = Qt.UserRole  # "folder" / "session" / "mindmap" / "document"
 ROLE_ID = Qt.UserRole + 1
 ROLE_LABEL = Qt.UserRole + 2  # 文件夹不带箭头的原始标签
 ROLE_MATCH_COLOR = Qt.UserRole + 3  # 会话匹配高亮色 key
+ROLE_CREATED = Qt.UserRole + 4
+ROLE_UPDATED = Qt.UserRole + 5
+
+_TIME_KINDS = ("session", "mindmap", "document")
 
 MATCH_BTN_W = 46
 MATCH_BTN_H = 22
@@ -256,6 +260,13 @@ class SessionTreeDelegate(QStyledItemDelegate):
     _PAD_X = 10
     _PAD_Y = 10
     _GAP = 8
+    _META_H = 16
+
+    def _fmt_ts(self, ts: str) -> str:
+        text = (ts or "").strip()
+        if len(text) >= 16 and text[4:5] == "-" and text[10:11] == " ":
+            return text[:16]
+        return text or "—"
 
     def paint(self, painter, option, index):
         opt = QStyleOptionViewItem(option)
@@ -329,11 +340,18 @@ class SessionTreeDelegate(QStyledItemDelegate):
             right_reserve = MATCH_BTN_EXTRA
         elif matching_session:
             right_reserve = MATCH_CHECK_W + 10
+        has_meta = kind in _TIME_KINDS
+        title_h = max(
+            16,
+            opt.rect.height()
+            - 2 * (self._PAD_Y - 2)
+            - (self._META_H + 2 if has_meta else 0),
+        )
         text_rect = QRectF(
             x,
             opt.rect.y() + self._PAD_Y - 2,
             max(24, opt.rect.right() - right_reserve - x),
-            max(16, opt.rect.height() - 2 * (self._PAD_Y - 2)),
+            title_h,
         )
         font = QFont(opt.font)
         item_font = index.data(Qt.FontRole)
@@ -346,9 +364,37 @@ class SessionTreeDelegate(QStyledItemDelegate):
         painter.setPen(QColor("#4a63f0") if selected else QColor("#2c3345"))
         text_opt = QTextOption()
         text_opt.setWrapMode(QTextOption.WrapAnywhere)
-        text_opt.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        text_opt.setAlignment(
+            Qt.AlignLeft | (Qt.AlignTop if has_meta else Qt.AlignVCenter)
+        )
         painter.drawText(text_rect, opt.text or "", text_opt)
         painter.restore()
+
+        if has_meta:
+            created = self._fmt_ts(index.data(ROLE_CREATED) or "")
+            updated = self._fmt_ts(index.data(ROLE_UPDATED) or "")
+            if updated == "—" or not updated:
+                updated = created
+            meta = f"创建 {created}  ·  编辑 {updated}"
+            meta_rect = QRect(
+                int(text_rect.x()),
+                bubble.bottom() - self._META_H - 3,
+                int(text_rect.width()),
+                self._META_H,
+            )
+            meta_font = QFont(opt.font)
+            meta_font.setPointSize(max(8, meta_font.pointSize() - 2))
+            meta_font.setBold(False)
+            painter.save()
+            painter.setFont(meta_font)
+            painter.setPen(QColor("#8b94ad"))
+            fm = QFontMetrics(meta_font)
+            painter.drawText(
+                meta_rect,
+                Qt.AlignLeft | Qt.AlignVCenter,
+                fm.elidedText(meta, Qt.ElideRight, meta_rect.width()),
+            )
+            painter.restore()
 
         if matching_session:
             self._paint_match_check(
@@ -427,6 +473,9 @@ class SessionTreeDelegate(QStyledItemDelegate):
             0, 0, text_w, 8000, Qt.TextWordWrap | Qt.TextWrapAnywhere, text
         )
         h = max(icon_h, br.height()) + 2 * self._PAD_Y
+        if index.data(ROLE_KIND) in _TIME_KINDS:
+            h += self._META_H + 4
+            return QSize(max(option.rect.width(), 40), max(h, 56))
         return QSize(max(option.rect.width(), 40), max(h, 38))
 
     def _text_width(self, option, index, icon_w: int) -> int:

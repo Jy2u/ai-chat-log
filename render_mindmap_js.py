@@ -23,6 +23,24 @@ _MM_JS = r"""
 
     function hideMenu() { menu.hidden = true; }
 
+    function sendApp(url) {
+        if (window.appCall) window.appCall(url);
+        else location.href = url;
+    }
+
+    function fmtNodeTime(t) {
+        t = (t || "").trim();
+        if (!t) return "未知";
+        var m = t.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
+        return m ? m[1] : t;
+    }
+    function nodeTimeHtml(node) {
+        var created = fmtNodeTime(node.getAttribute("data-created"));
+        var updated = fmtNodeTime(node.getAttribute("data-updated") || node.getAttribute("data-created"));
+        return '<div class="mm-menu-meta">创建 ' + created + '</div>' +
+            '<div class="mm-menu-meta">编辑 ' + updated + '</div>';
+    }
+
     function nodeIsProse(text) {
         text = (text || "").replace(/\s+$/g, "");
         if (!text) return false;
@@ -48,9 +66,9 @@ _MM_JS = r"""
     }
 
     function sendCam() {
-        location.href = "app://setcam/0#" + encodeURIComponent(JSON.stringify({
+        sendApp("app://setcam/0#" + encodeURIComponent(JSON.stringify({
             tx: cam.tx, ty: cam.ty, scale: cam.scale
-        }));
+        })));
     }
 
     function lineGeom(a, b, ov) {
@@ -260,13 +278,13 @@ _MM_JS = r"""
             window.removeEventListener("mouseup", up);
             ignoreClick = true;
             setTimeout(function () { ignoreClick = false; }, 50);
-            location.href = "app://setsize/" + selectedNodeId + "#" +
+            sendApp("app://setsize/" + selectedNodeId + "#" +
                 encodeURIComponent(JSON.stringify({
                     x: parseFloat(el.style.left) || 0,
                     y: parseFloat(el.style.top) || 0,
                     w: el.offsetWidth,
                     h: el.offsetHeight
-                }));
+                })));
         }
         window.addEventListener("mousemove", move);
         window.addEventListener("mouseup", up);
@@ -306,11 +324,11 @@ _MM_JS = r"""
         var side = linking.side;
         cancelLink();
         if (!target || target === src) return;
-        location.href = "app://connect/" + src + "#" +
+        sendApp("app://connect/" + src + "#" +
             encodeURIComponent(JSON.stringify({
                 side: side,
                 target: parseInt(target, 10)
-            }));
+            })));
     }
 
     function updateHandles(byId) {
@@ -560,7 +578,7 @@ _MM_JS = r"""
                         y: parseFloat(el.style.top)
                     };
                 });
-                location.href = "app://setpos/0#" + encodeURIComponent(JSON.stringify(payload));
+                sendApp("app://setpos/0#" + encodeURIComponent(JSON.stringify(payload)));
                 ignoreClick = true;
                 setTimeout(function () { ignoreClick = false; }, 50);
             }
@@ -608,6 +626,8 @@ _MM_JS = r"""
             var isRoot = node.classList.contains("root");
             var hlLabel = node.classList.contains("hl") ? "取消高亮" : "高亮";
             menu.innerHTML =
+                nodeTimeHtml(node) +
+                '<div class="mm-menu-sep"></div>' +
                 '<button type="button" data-act="addbox">新建子框</button>' +
                 '<button type="button" data-act="addtext">新建子句</button>' +
                 '<button type="button" data-act="togglehl">' + hlLabel + '</button>' +
@@ -648,11 +668,25 @@ _MM_JS = r"""
         hideMenu();
         var act = btn.getAttribute("data-act");
         if (act === "addfreebox" || act === "addfreetext") {
-            location.href = "app://" + act + "/0#" +
-                encodeURIComponent(JSON.stringify(lastWorld));
+            sendApp("app://" + act + "/0#" +
+                encodeURIComponent(JSON.stringify(lastWorld)));
             return;
         }
-        location.href = "app://" + act + "/" + currentId;
+        if (act === "addbox" || act === "addtext" ||
+            act === "edgebox" || act === "edgetext") {
+            var items = [];
+            document.querySelectorAll(".mm-node").forEach(function (el) {
+                items.push({
+                    id: parseInt(el.getAttribute("data-id"), 10),
+                    x: parseFloat(el.style.left) || 0,
+                    y: parseFloat(el.style.top) || 0
+                });
+            });
+            sendApp("app://" + act + "/" + currentId + "#" +
+                encodeURIComponent(JSON.stringify({ positions: items })));
+            return;
+        }
+        sendApp("app://" + act + "/" + currentId);
     });
 
     document.querySelectorAll(".mm-edge-label").forEach(function (el) {
@@ -660,7 +694,7 @@ _MM_JS = r"""
             e.preventDefault();
             e.stopPropagation();
             hideMenu();
-            location.href = "app://editedge/" + el.getAttribute("data-eid");
+            sendApp("app://editedge/" + el.getAttribute("data-eid"));
         });
     });
 
@@ -690,8 +724,8 @@ _MM_JS = r"""
             body.contentEditable = "false";
             var text = (body.innerText || "").replace(/\u00a0/g, " ");
             if (text.slice(-1) === "\n") text = text.slice(0, -1);
-            location.href = "app://savenode/" + node.getAttribute("data-id") +
-                "#" + encodeURIComponent(text);
+            sendApp("app://savenode/" + node.getAttribute("data-id") +
+                "#" + encodeURIComponent(text));
         });
         body.addEventListener("keydown", function (e) {
             if (e.key === "Escape") { body.blur(); return; }
@@ -839,8 +873,8 @@ _MM_JS = r"""
                     ignoreClick = true;
                     setTimeout(function () { ignoreClick = false; }, 50);
                     if (!target || !selectedEid) return;
-                    location.href = "app://relink/" + selectedEid + "#" +
-                        encodeURIComponent(JSON.stringify({ end: end, target: parseInt(target, 10) }));
+                    sendApp("app://relink/" + selectedEid + "#" +
+                        encodeURIComponent(JSON.stringify({ end: end, target: parseInt(target, 10) })));
                 }
                 window.addEventListener("mousemove", move);
                 window.addEventListener("mouseup", up);

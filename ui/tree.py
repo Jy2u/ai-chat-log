@@ -10,10 +10,12 @@ from PySide6.QtWidgets import (
 )
 
 from ui.widgets import (
+    ROLE_CREATED,
     ROLE_ID,
     ROLE_KIND,
     ROLE_LABEL,
     ROLE_MATCH_COLOR,
+    ROLE_UPDATED,
     MATCH_COLORS,
     MatchColorPopup,
     _ordered_insert,
@@ -255,7 +257,8 @@ class TreeMixin:
         item.setData(0, ROLE_KIND, "session")
         item.setData(0, ROLE_ID, s["id"])
         item.setData(0, ROLE_MATCH_COLOR, s.get("match_color") or "")
-        item.setToolTip(0, f"创建于 {s['created_at']} · 拖动可调整顺序")
+        item.setData(0, ROLE_CREATED, s.get("created_at") or "")
+        item.setData(0, ROLE_UPDATED, s.get("updated_at") or s.get("created_at") or "")
         item.setFlags(
             Qt.ItemIsEnabled
             | Qt.ItemIsSelectable
@@ -269,7 +272,8 @@ class TreeMixin:
         item.setIcon(0, self._map_icon)
         item.setData(0, ROLE_KIND, "mindmap")
         item.setData(0, ROLE_ID, m["id"])
-        item.setToolTip(0, f"思维导图 · 创建于 {m['created_at']} · 拖动可调整顺序")
+        item.setData(0, ROLE_CREATED, m.get("created_at") or "")
+        item.setData(0, ROLE_UPDATED, m.get("updated_at") or m.get("created_at") or "")
         item.setFlags(
             Qt.ItemIsEnabled
             | Qt.ItemIsSelectable
@@ -283,7 +287,8 @@ class TreeMixin:
         item.setIcon(0, self._doc_icon)
         item.setData(0, ROLE_KIND, "document")
         item.setData(0, ROLE_ID, d["id"])
-        item.setToolTip(0, f"文档 · 创建于 {d['created_at']} · 拖动可调整顺序")
+        item.setData(0, ROLE_CREATED, d.get("created_at") or "")
+        item.setData(0, ROLE_UPDATED, d.get("updated_at") or d.get("created_at") or "")
         item.setFlags(
             Qt.ItemIsEnabled
             | Qt.ItemIsSelectable

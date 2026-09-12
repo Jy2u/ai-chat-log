@@ -6,6 +6,14 @@ from db import _now
 class MindmapMixin:
     # ---------- 思维导图 ----------
 
+    def _stamp_mindmap(self, mindmap_id: int):
+        if not mindmap_id:
+            return
+        self.conn.execute(
+            "UPDATE mindmaps SET updated_at = ? WHERE id = ?",
+            (_now(), mindmap_id),
+        )
+
     def create_mindmap(
         self, name: str, folder_id=None, session_id=None, subject_id=None
     ) -> int:
@@ -17,23 +25,25 @@ class MindmapMixin:
         )
         cur = self.conn.execute(
             "INSERT INTO mindmaps"
-            " (name, created_at, folder_id, session_id, subject_id, sort_order)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (name, _now(), folder_id, session_id, subject_id, order),
+            " (name, created_at, updated_at, folder_id, session_id, subject_id, sort_order)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, _now(), _now(), folder_id, session_id, subject_id, order),
         )
         mid = cur.lastrowid
+        now = _now()
         self.conn.execute(
             "INSERT INTO mindmap_nodes"
-            " (mindmap_id, parent_id, kind, content, sort_order)"
-            " VALUES (?, NULL, 'box', ?, 0)",
-            (mid, name),
+            " (mindmap_id, parent_id, kind, content, sort_order,"
+            " created_at, updated_at)"
+            " VALUES (?, NULL, 'box', ?, 0, ?, ?)",
+            (mid, name, now, now),
         )
         self.conn.commit()
         return mid
 
     def list_mindmaps(self, subject_id=None) -> list:
         sql = """
-            SELECT id, name, created_at, folder_id, session_id, subject_id,
+            SELECT id, name, created_at, updated_at, folder_id, session_id, subject_id,
                    sort_order
             FROM mindmaps
             WHERE deleted_at IS NULL
@@ -48,7 +58,7 @@ class MindmapMixin:
 
     def get_mindmap(self, mindmap_id: int):
         row = self.conn.execute(
-            "SELECT id, name, created_at, folder_id, session_id, subject_id,"
+            "SELECT id, name, created_at, updated_at, folder_id, session_id, subject_id,"
             " deleted_at FROM mindmaps WHERE id = ?",
             (mindmap_id,),
         ).fetchone()
@@ -57,7 +67,8 @@ class MindmapMixin:
     def rename_mindmap(self, mindmap_id: int, name: str):
         old = self.get_mindmap(mindmap_id)
         self.conn.execute(
-            "UPDATE mindmaps SET name = ? WHERE id = ?", (name, mindmap_id)
+            "UPDATE mindmaps SET name = ?, updated_at = ? WHERE id = ?",
+            (name, _now(), mindmap_id),
         )
         if old and old["name"] != name:
             root = self.conn.execute(
@@ -67,8 +78,9 @@ class MindmapMixin:
             ).fetchone()
             if root is not None and root["content"] == old["name"]:
                 self.conn.execute(
-                    "UPDATE mindmap_nodes SET content = ? WHERE id = ?",
-                    (name, root["id"]),
+                    "UPDATE mindmap_nodes SET content = ?, updated_at = ?"
+                    " WHERE id = ?",
+                    (name, _now(), root["id"]),
                 )
         self.conn.commit()
 
@@ -115,9 +127,9 @@ class MindmapMixin:
         )
         cur = self.conn.execute(
             "INSERT INTO mindmaps"
-            " (name, created_at, folder_id, session_id, subject_id, sort_order)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (name, _now(), folder_id, session_id, subject_id, order),
+            " (name, created_at, updated_at, folder_id, session_id, subject_id, sort_order)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, _now(), _now(), folder_id, session_id, subject_id, order),
         )
         new_mid = cur.lastrowid
         nodes = self.get_mindmap_nodes(mindmap_id)
@@ -126,8 +138,9 @@ class MindmapMixin:
             cur = self.conn.execute(
                 "INSERT INTO mindmap_nodes"
                 " (mindmap_id, parent_id, kind, content, sort_order,"
-                " pos_x, pos_y, edge_label, highlighted, box_w, box_h)"
-                " VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " pos_x, pos_y, edge_label, highlighted, box_w, box_h,"
+                " created_at, updated_at)"
+                " VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     new_mid,
                     n["kind"],
@@ -139,6 +152,8 @@ class MindmapMixin:
                     1 if n.get("highlighted") else 0,
                     n.get("box_w"),
                     n.get("box_h"),
+                    n.get("created_at") or _now(),
+                    n.get("updated_at") or n.get("created_at") or _now(),
                 ),
             )
             id_map[n["id"]] = cur.lastrowid
@@ -166,7 +181,8 @@ class MindmapMixin:
         rows = self.conn.execute(
             """
             SELECT id, mindmap_id, parent_id, kind, content, sort_order,
-                   pos_x, pos_y, edge_label, highlighted, box_w, box_h
+                   pos_x, pos_y, edge_label, highlighted, box_w, box_h,
+                   created_at, updated_at
             FROM mindmap_nodes WHERE mindmap_id = ?
             ORDER BY sort_order, id
             """,
@@ -177,7 +193,8 @@ class MindmapMixin:
     def get_mindmap_node(self, node_id: int):
         row = self.conn.execute(
             "SELECT id, mindmap_id, parent_id, kind, content, sort_order,"
-            " pos_x, pos_y, edge_label, highlighted, box_w, box_h"
+            " pos_x, pos_y, edge_label, highlighted, box_w, box_h,"
+            " created_at, updated_at"
             " FROM mindmap_nodes WHERE id = ?",
             (node_id,),
         ).fetchone()
@@ -216,23 +233,19 @@ class MindmapMixin:
             parent = self.get_mindmap_node(parent_id)
             px, py = pos_x, pos_y
             if px is None and parent is not None and parent.get("pos_x") is not None:
-                pw = 230 if parent["kind"] == "text" else 168
-                ph = 40 if kind == "text" else 46
-                sibs = self.conn.execute(
-                    "SELECT COUNT(*) AS c FROM mindmap_nodes WHERE parent_id = ?",
-                    (parent_id,),
-                ).fetchone()["c"]
-                px = float(parent["pos_x"]) + pw + 56
-                py = float(parent["pos_y"]) + sibs * (ph + 18)
+                px, py = self._place_new_child(parent, kind)
+        now = _now()
         cur = self.conn.execute(
             "INSERT INTO mindmap_nodes"
-            " (mindmap_id, parent_id, kind, content, sort_order, pos_x, pos_y)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (mindmap_id, parent_id, kind, content, nxt, px, py),
+            " (mindmap_id, parent_id, kind, content, sort_order, pos_x, pos_y,"
+            " created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (mindmap_id, parent_id, kind, content, nxt, px, py, now, now),
         )
         new_id = cur.lastrowid
         if parent_id is not None:
             self._insert_edge(mindmap_id, parent_id, new_id, "")
+        self._stamp_mindmap(mindmap_id)
         self.conn.commit()
         return new_id
 
@@ -263,6 +276,7 @@ class MindmapMixin:
         to_id = edge["to_id"]
         self.conn.execute("DELETE FROM mindmap_edges WHERE id = ?", (edge_id,))
         self._refresh_primary_parent(to_id)
+        self._stamp_mindmap(edge["mindmap_id"])
         self.conn.commit()
 
     def _insert_edge(self, mindmap_id: int, from_id: int, to_id: int, label: str = ""):
@@ -318,6 +332,7 @@ class MindmapMixin:
                 " WHERE id = ?",
                 (from_id, self._next_child_sort(from_id), to_id),
             )
+        self._stamp_mindmap(a["mindmap_id"])
         self.conn.commit()
         return ""
 
@@ -345,10 +360,12 @@ class MindmapMixin:
             y2 = float(child["pos_y"]) + ch / 2
             px = (x1 + x2) / 2 - nw / 2
             py = (y1 + y2) / 2 - nh / 2
+        now = _now()
         cur = self.conn.execute(
             "INSERT INTO mindmap_nodes"
-            " (mindmap_id, parent_id, kind, content, sort_order, pos_x, pos_y)"
-            " VALUES (?, ?, ?, '', ?, ?, ?)",
+            " (mindmap_id, parent_id, kind, content, sort_order, pos_x, pos_y,"
+            " created_at, updated_at)"
+            " VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)",
             (
                 child["mindmap_id"],
                 parent["id"],
@@ -356,6 +373,8 @@ class MindmapMixin:
                 child["sort_order"],
                 px,
                 py,
+                now,
+                now,
             ),
         )
         new_id = cur.lastrowid
@@ -370,6 +389,7 @@ class MindmapMixin:
                 " WHERE id = ?",
                 (new_id, child["id"]),
             )
+        self._stamp_mindmap(child["mindmap_id"])
         self.conn.commit()
         return new_id
 
@@ -378,6 +398,9 @@ class MindmapMixin:
             "UPDATE mindmap_edges SET label = ? WHERE id = ?",
             (text, edge_id),
         )
+        edge = self.get_mindmap_edge(edge_id)
+        if edge:
+            self._stamp_mindmap(edge["mindmap_id"])
         self.conn.commit()
 
     def toggle_mindmap_highlight(self, node_id: int) -> bool:
@@ -389,6 +412,7 @@ class MindmapMixin:
             "UPDATE mindmap_nodes SET highlighted = ? WHERE id = ?",
             (nxt, node_id),
         )
+        self._stamp_mindmap(node["mindmap_id"])
         self.conn.commit()
         return bool(nxt)
 
@@ -407,6 +431,40 @@ class MindmapMixin:
             (x, y, w, h, node_id),
         )
         self.conn.commit()
+
+    def _guess_node_size(self, node, kind=None):
+        kind = kind or (node or {}).get("kind") or "box"
+        if node:
+            try:
+                bw, bh = node.get("box_w"), node.get("box_h")
+                if bw is not None and float(bw) > 0 and bh is not None and float(bh) > 0:
+                    return float(bw), float(bh)
+            except (TypeError, ValueError):
+                pass
+        if kind == "text":
+            return 140.0, 38.0
+        return 168.0, 46.0
+
+    def _place_new_child(self, parent: dict, kind: str):
+        """新子节点放在父节点右侧、已有兄弟下方，不改已有单元的位置。"""
+        pw, _ph = self._guess_node_size(parent)
+        px = float(parent["pos_x"]) + pw + 56
+        sibs = self.conn.execute(
+            "SELECT pos_y, box_h, kind, content FROM mindmap_nodes"
+            " WHERE parent_id = ?",
+            (parent["id"],),
+        ).fetchall()
+        bottoms = []
+        for s in sibs:
+            if s["pos_y"] is None:
+                continue
+            _sw, sh = self._guess_node_size(dict(s), s["kind"])
+            bottoms.append(float(s["pos_y"]) + sh)
+        if bottoms:
+            py = max(bottoms) + 18
+        else:
+            py = float(parent["pos_y"] or 0)
+        return px, py
 
     def _next_child_sort(self, parent_id: int) -> int:
         row = self.conn.execute(
@@ -457,20 +515,23 @@ class MindmapMixin:
         )
         self._refresh_primary_parent(old_to)
         self._refresh_primary_parent(new_to)
+        self._stamp_mindmap(edge["mindmap_id"])
         self.conn.commit()
         return ""
 
     def update_mindmap_node(self, node_id: int, content: str):
         self.conn.execute(
-            "UPDATE mindmap_nodes SET content = ? WHERE id = ?",
-            (content, node_id),
+            "UPDATE mindmap_nodes SET content = ?, updated_at = ? WHERE id = ?",
+            (content, _now(), node_id),
         )
         node = self.get_mindmap_node(node_id)
         if node and self.is_mindmap_root(node):
             self.conn.execute(
-                "UPDATE mindmaps SET name = ? WHERE id = ?",
-                (content.strip() or "思维导图", node["mindmap_id"]),
+                "UPDATE mindmaps SET name = ?, updated_at = ? WHERE id = ?",
+                (content.strip() or "思维导图", _now(), node["mindmap_id"]),
             )
+        elif node:
+            self._stamp_mindmap(node["mindmap_id"])
         self.conn.commit()
 
     def delete_mindmap_node_keep_children(self, node_id: int):
@@ -518,14 +579,18 @@ class MindmapMixin:
                     node["mindmap_id"], inn["from_id"], out["to_id"], out["label"]
                 )
         self.conn.execute("DELETE FROM mindmap_nodes WHERE id = ?", (node_id,))
+        self._stamp_mindmap(node["mindmap_id"])
         self.conn.commit()
 
     def delete_mindmap_node(self, node_id: int):
+        node = self.get_mindmap_node(node_id)
         kids = self.conn.execute(
             "SELECT id FROM mindmap_nodes WHERE parent_id = ?", (node_id,)
         ).fetchall()
         for kid in kids:
             self.delete_mindmap_node(kid["id"])
         self.conn.execute("DELETE FROM mindmap_nodes WHERE id = ?", (node_id,))
+        if node:
+            self._stamp_mindmap(node["mindmap_id"])
         self.conn.commit()
 

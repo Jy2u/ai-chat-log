@@ -49,6 +49,7 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT '',
                 auto_named INTEGER NOT NULL DEFAULT 1,
                 folder_id INTEGER REFERENCES folders(id) ON DELETE CASCADE
             );
@@ -67,6 +68,7 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT '',
                 folder_id INTEGER REFERENCES folders(id) ON DELETE CASCADE,
                 session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE
             );
@@ -83,7 +85,9 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
                 edge_label TEXT NOT NULL DEFAULT '',
                 highlighted INTEGER NOT NULL DEFAULT 0,
                 box_w REAL,
-                box_h REAL
+                box_h REAL,
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_mindmap_nodes_map
                 ON mindmap_nodes(mindmap_id);
@@ -145,6 +149,37 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
         if "box_w" not in map_cols:
             self.conn.execute("ALTER TABLE mindmap_nodes ADD COLUMN box_w REAL")
             self.conn.execute("ALTER TABLE mindmap_nodes ADD COLUMN box_h REAL")
+        if "created_at" not in map_cols:
+            self.conn.execute(
+                "ALTER TABLE mindmap_nodes ADD COLUMN"
+                " created_at TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.execute(
+                "ALTER TABLE mindmap_nodes ADD COLUMN"
+                " updated_at TEXT NOT NULL DEFAULT ''"
+            )
+            now = _now()
+            self.conn.execute(
+                """
+                UPDATE mindmap_nodes
+                SET created_at = COALESCE(
+                    NULLIF((
+                        SELECT created_at FROM mindmaps
+                        WHERE mindmaps.id = mindmap_nodes.mindmap_id
+                    ), ''),
+                    ?
+                ),
+                updated_at = COALESCE(
+                    NULLIF((
+                        SELECT created_at FROM mindmaps
+                        WHERE mindmaps.id = mindmap_nodes.mindmap_id
+                    ), ''),
+                    ?
+                )
+                WHERE created_at = '' OR updated_at = ''
+                """,
+                (now, now),
+            )
         self.conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS mindmap_edges (
@@ -178,6 +213,7 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
         self._ensure_documents_table()
         self._migrate_deleted_at()
         self._migrate_match_color()
+        self._migrate_updated_at()
         self._ensure_todos_table()
         self._ensure_stash_table()
         self.conn.commit()
@@ -194,6 +230,51 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
             self.conn.execute(
                 "ALTER TABLE sessions ADD COLUMN match_color TEXT"
             )
+
+    def _migrate_updated_at(self):
+        """会话 / 导图补最后编辑时间。"""
+        if "updated_at" not in self._table_cols("sessions"):
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN"
+                " updated_at TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.execute(
+                """
+                UPDATE sessions SET updated_at = COALESCE(
+                    (
+                        SELECT MAX(created_at) FROM messages
+                        WHERE messages.session_id = sessions.id
+                    ),
+                    created_at
+                )
+                WHERE updated_at = ''
+                """
+            )
+        if "updated_at" not in self._table_cols("mindmaps"):
+            self.conn.execute(
+                "ALTER TABLE mindmaps ADD COLUMN"
+                " updated_at TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.execute(
+                """
+                UPDATE mindmaps SET updated_at = COALESCE(
+                    NULLIF((
+                        SELECT MAX(updated_at) FROM mindmap_nodes
+                        WHERE mindmap_nodes.mindmap_id = mindmaps.id
+                    ), ''),
+                    created_at
+                )
+                WHERE updated_at = ''
+                """
+            )
+
+    def _stamp_session(self, session_id: int):
+        if not session_id:
+            return
+        self.conn.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            (_now(), session_id),
+        )
 
     def _ensure_todos_table(self):
         self.conn.execute(
@@ -844,9 +925,9 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
         order = self._mixed_front_sort(subject_id, folder_id=folder_id)
         cur = self.conn.execute(
             "INSERT INTO sessions"
-            " (name, created_at, auto_named, folder_id, subject_id, sort_order)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (name, _now(), int(auto_named), folder_id, subject_id, order),
+            " (name, created_at, updated_at, auto_named, folder_id, subject_id, sort_order)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, _now(), _now(), int(auto_named), folder_id, subject_id, order),
         )
         self.conn.commit()
         return cur.lastrowid
@@ -854,8 +935,8 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
     def list_sessions(self, subject_id=None) -> list:
         """返回 [{id, name, created_at, folder_id, subject_id, count}]，新建的在前。"""
         sql = """
-            SELECT s.id, s.name, s.created_at, s.folder_id, s.subject_id,
-                   s.sort_order, s.match_color, COUNT(m.id) AS count
+            SELECT s.id, s.name, s.created_at, s.updated_at, s.folder_id,
+                   s.subject_id, s.sort_order, s.match_color, COUNT(m.id) AS count
             FROM sessions s
             LEFT JOIN messages m ON m.session_id = s.id
             WHERE s.deleted_at IS NULL
@@ -870,8 +951,8 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
 
     def get_session(self, session_id: int):
         row = self.conn.execute(
-            "SELECT id, name, created_at, folder_id, subject_id, deleted_at,"
-            " match_color FROM sessions WHERE id = ?",
+            "SELECT id, name, created_at, updated_at, folder_id, subject_id,"
+            " deleted_at, match_color FROM sessions WHERE id = ?",
             (session_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -982,8 +1063,9 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
     def rename_session(self, session_id: int, name: str):
         """用户手动命名后，该会话不再参与自动命名。"""
         self.conn.execute(
-            "UPDATE sessions SET name = ?, auto_named = 0 WHERE id = ?",
-            (name, session_id),
+            "UPDATE sessions SET name = ?, auto_named = 0, updated_at = ?"
+            " WHERE id = ?",
+            (name, _now(), session_id),
         )
         self.conn.commit()
 
@@ -1026,6 +1108,7 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
             " VALUES (?, ?, ?, ?, ?)",
             (session_id, role, content, kind, _now()),
         )
+        self._stamp_session(session_id)
         self.conn.commit()
         return cur.lastrowid
 
@@ -1046,15 +1129,21 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
         return dict(row) if row else None
 
     def delete_message(self, message_id: int):
+        msg = self.get_message(message_id)
         self.conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+        if msg:
+            self._stamp_session(msg["session_id"])
         self.conn.commit()
 
     def flip_role(self, message_id: int):
+        msg = self.get_message(message_id)
         self.conn.execute(
             "UPDATE messages SET role = CASE role WHEN 'user' THEN 'ai'"
             " ELSE 'user' END WHERE id = ?",
             (message_id,),
         )
+        if msg:
+            self._stamp_session(msg["session_id"])
         self.conn.commit()
 
     # ---------- 搜索 ----------

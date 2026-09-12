@@ -3,9 +3,11 @@
 import os
 import re
 import shutil
+import time
 import zipfile
 from datetime import datetime
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMenu, QMessageBox
 
 import render
@@ -19,6 +21,25 @@ from ui.widgets import (
 )
 
 _FOLLOW_CURRENT = object()
+_BACKUP_ROOT = r"C:\jy_keepmoving\研究生\研1上\2026-09-01-ai对话记录器备份"
+_UNSAFE_NAME = re.compile(r'[<>:"/\\|?*]')
+_AUTO_BACKUP_REASON = "自动备份"
+_AUTO_BACKUP_SEC = 6 * 60 * 60
+_AUTO_BACKUP_MS = _AUTO_BACKUP_SEC * 1000
+_AUTO_BACKUP_RETRY_MS = 30 * 60 * 1000
+_LAST_AUTO_BACKUP_KEY = "last_auto_backup_at"
+_AUTO_BACKUP_START_KEY = "auto_backup_start_at"
+
+
+def _fmt_remain(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}小时{minutes}分"
+    if minutes:
+        return f"{minutes}分{secs}秒"
+    return f"{secs}秒"
 
 
 class OpsMixin:
@@ -716,41 +737,92 @@ class OpsMixin:
         )
 
     def backup_data(self):
-        last = self._settings.value("last_backup_dir", "")
-        dest = QFileDialog.getExistingDirectory(self, "选择备份文件夹", last)
-        if not dest:
+        reason, ok = QInputDialog.getText(self, "备份整个软件", "备份原因：")
+        if not ok:
             return
-        dest = os.path.abspath(dest)
+        self._run_backup(reason, silent=False)
+
+    def _setup_auto_backup(self):
+        self._next_auto_backup_at = None
+        self._auto_backup_timer = QTimer(self)
+        self._auto_backup_timer.setSingleShot(True)
+        self._auto_backup_timer.timeout.connect(self._auto_backup)
+        self._auto_backup_clock = QTimer(self)
+        self._auto_backup_clock.timeout.connect(self._refresh_auto_backup_hint)
+        self._auto_backup_clock.start(1000)
+        self._schedule_auto_backup()
+
+    def _auto_backup_anchor(self):
+        last = self._settings.value(_LAST_AUTO_BACKUP_KEY, 0.0, type=float)
+        if last:
+            return last
+        start = self._settings.value(_AUTO_BACKUP_START_KEY, 0.0, type=float)
+        if not start:
+            start = time.time()
+            self._settings.setValue(_AUTO_BACKUP_START_KEY, start)
+            self._settings.sync()
+        return start
+
+    def _schedule_auto_backup(self, delay_ms=None):
+        now = time.time()
+        if delay_ms is None:
+            due = self._auto_backup_anchor() + _AUTO_BACKUP_SEC
+        else:
+            due = now + delay_ms / 1000.0
+        self._next_auto_backup_at = due
+        wait = max(1000, int((due - now) * 1000))
+        self._auto_backup_timer.start(wait)
+        self._refresh_auto_backup_hint()
+
+    def _refresh_auto_backup_hint(self):
+        label = getattr(self, "_auto_backup_hint", None)
+        if label is None:
+            return
+        last = self._settings.value(_LAST_AUTO_BACKUP_KEY, 0.0, type=float)
+        if last:
+            last_txt = datetime.fromtimestamp(last).strftime("%Y-%m-%d %H:%M")
+            last_part = f"上次自动备份 {last_txt}"
+        else:
+            start = self._auto_backup_anchor()
+            start_txt = datetime.fromtimestamp(start).strftime("%Y-%m-%d %H:%M")
+            last_part = f"尚未自动备份（起始 {start_txt}）"
+        due = getattr(self, "_next_auto_backup_at", None)
+        if due is None:
+            due = self._auto_backup_anchor() + _AUTO_BACKUP_SEC
+            self._next_auto_backup_at = due
+        remain = int(due - time.time())
+        remain_part = (
+            "正在自动备份" if remain <= 0 else f"下次还有 {_fmt_remain(remain)}"
+        )
+        label.setText(f"{last_part}  ·  {remain_part}")
+
+    def _auto_backup(self):
+        ok = self._run_backup(_AUTO_BACKUP_REASON, silent=True)
+        if ok:
+            now = time.time()
+            self._settings.setValue(_LAST_AUTO_BACKUP_KEY, now)
+            self._settings.setValue(_AUTO_BACKUP_START_KEY, now)
+            self._settings.sync()
+            self._schedule_auto_backup()
+            return
+        self._schedule_auto_backup(_AUTO_BACKUP_RETRY_MS)
+
+    def _run_backup(self, reason: str, silent: bool = False) -> bool:
+        reason = _UNSAFE_NAME.sub("", (reason or "").strip())
+        if not reason:
+            if not silent:
+                QMessageBox.warning(self, "备份整个软件", "请填写备份原因。")
+            return False
+
+        stamp = datetime.now().strftime("%Y-%m-%d-%H点%M分")
+        folder = f"{stamp}-{reason}"
+        dest = os.path.join(_BACKUP_ROOT, folder)
+        n = 2
+        while os.path.exists(dest):
+            dest = os.path.join(_BACKUP_ROOT, f"{folder}-{n}")
+            n += 1
+
         app_dir = os.path.abspath(os.path.dirname(DATA_DIR))
-        app_key = os.path.normcase(app_dir)
-        dest_key = os.path.normcase(dest)
-        try:
-            inside_app = os.path.commonpath([dest_key, app_key]) == app_key
-        except ValueError:
-            inside_app = False
-        if inside_app:
-            QMessageBox.warning(
-                self,
-                "备份整个软件",
-                "请不要备份到软件自己的文件夹里，另选一个目录。",
-            )
-            return
-
-        try:
-            dest_has_files = any(os.scandir(dest))
-        except OSError as e:
-            QMessageBox.warning(self, "备份失败", str(e))
-            self._status.setText(f"备份失败：{e}")
-            return
-        if dest_has_files:
-            ret = QMessageBox.question(
-                self,
-                "备份整个软件",
-                "目标文件夹不是空的，备份会写入并覆盖其中的同名文件。是否继续？",
-            )
-            if ret != QMessageBox.Yes:
-                return
-
         skip_dirs = {"__pycache__", ".git", ".cursor", ".idea", ".vscode"}
         skip_db = {"chatlog.db", "chatlog.db-wal", "chatlog.db-shm"}
 
@@ -764,14 +836,15 @@ class OpsMixin:
         dest_db = os.path.join(dest, "data", "chatlog.db")
         dest_images = os.path.join(dest, "data", "images")
         try:
-            shutil.copytree(app_dir, dest, ignore=ignore, dirs_exist_ok=True)
+            os.makedirs(_BACKUP_ROOT, exist_ok=True)
+            shutil.copytree(app_dir, dest, ignore=ignore)
             self._db.backup_to(dest_db)
         except OSError as e:
-            QMessageBox.warning(self, "备份失败", str(e))
+            if not silent:
+                QMessageBox.warning(self, "备份失败", str(e))
             self._status.setText(f"备份失败：{e}")
-            return
+            return False
 
-        self._settings.setValue("last_backup_dir", dest)
         n_img = 0
         if os.path.isdir(dest_images):
             n_img = sum(
@@ -782,6 +855,7 @@ class OpsMixin:
         self._status.setText(
             f"已备份到 {dest}（程序文件 + 数据库 + {n_img} 张图片）"
         )
+        return True
 
     def _tree_menu(self, pos):
         item = self._tree.itemAt(pos)

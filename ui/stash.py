@@ -16,9 +16,9 @@ from PySide6.QtWidgets import (
 )
 
 STASH_KINDS = (
+    ("prompt", "提示词"),
     ("key", "密钥"),
     ("account", "账号密码"),
-    ("prompt", "提示词"),
 )
 STASH_HINT = {
     "key": ("粘贴密钥", "还没有密钥"),
@@ -193,7 +193,7 @@ class StashPanel(QFrame):
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self._db = db
-        self._kind = "key"
+        self._kind = "prompt"
         self.setObjectName("stashBar")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)

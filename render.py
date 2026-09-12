@@ -134,6 +134,11 @@ def _restore_math(html_out: str, maths: list) -> str:
 
 
 def md_to_html(text: str) -> str:
+    from render_canvas import try_canvas_html
+
+    canvas = try_canvas_html(text)
+    if canvas:
+        return canvas
     text, maths = _extract_math(text)
     return _restore_math(_md.render(text), maths)
 
@@ -224,6 +229,38 @@ def _page(body: str, scroll_bottom: bool, wide: bool = False, extra_js: str = ""
         else ""
     )
     wrap_cls = "wrap wrap-wide" if wide else "wrap"
+    bridge = r"""
+<script>
+window.appCall = function (url) {
+    var f = document.getElementById("__appBridge");
+    if (!f) {
+        f = document.createElement("iframe");
+        f.id = "__appBridge";
+        f.setAttribute("aria-hidden", "true");
+        f.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;border:0;opacity:0;pointer-events:none";
+        document.documentElement.appendChild(f);
+    }
+    var hash = url.indexOf("#");
+    var stamp = "_=" + Date.now();
+    if (hash < 0) {
+        url += (url.indexOf("?") >= 0 ? "&" : "?") + stamp;
+    } else {
+        var base = url.slice(0, hash);
+        url = base + (base.indexOf("?") >= 0 ? "&" : "?") + stamp + url.slice(hash);
+    }
+    f.src = url;
+};
+document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest("a");
+    if (!a) return;
+    var href = a.getAttribute("href") || "";
+    if (href.indexOf("app://") === 0) {
+        e.preventDefault();
+        window.appCall(href);
+    }
+}, true);
+</script>
+"""
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>{_CSS}</style>
@@ -232,6 +269,7 @@ def _page(body: str, scroll_bottom: bool, wide: bool = False, extra_js: str = ""
 <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
 <div class="{wrap_cls}">{body}</div>
 {katex_js}<script>{scroll}</script>
+{bridge}
 {f"<script>{extra_js}</script>" if extra_js else ""}
 </body></html>"""
 
@@ -263,7 +301,9 @@ def _message_html(msg: dict, ops: bool = True, extra_meta: str = "") -> str:
             f'<img class="msg-img" src="{uri}" alt="图片"></a>'
         )
     else:
-        bubble_cls = "bubble"
+        from render_canvas import is_canvas_source
+
+        bubble_cls = "bubble canvas-bubble" if is_canvas_source(msg["content"]) else "bubble"
         body = md_to_html(msg["content"])
     return (
         f'<div class="msg {role}" id="msg-{msg["id"]}">'
@@ -325,6 +365,28 @@ _CHAT_NAV_JS = r"""
 })();
 """
 
+_JUMP_MSG_JS = r"""
+(function (id) {
+    function go() {
+        var el = id ? document.getElementById("msg-" + id) : null;
+        if (el) {
+            el.scrollIntoView({ block: "center" });
+            el.classList.add("flash");
+            return;
+        }
+        var y = Math.max(
+            document.body.scrollHeight,
+            document.documentElement.scrollHeight
+        );
+        window.scrollTo(0, y);
+    }
+    go();
+    window.addEventListener("load", go);
+    setTimeout(go, 80);
+    setTimeout(go, 280);
+})(%d);
+"""
+
 
 def _chat_nav_html(messages: list) -> str:
     questions = [m for m in messages if m.get("role") == "user"]
@@ -345,7 +407,7 @@ def _chat_nav_html(messages: list) -> str:
     )
 
 
-def build_chat_page(session: dict, messages: list) -> str:
+def build_chat_page(session: dict, messages: list, highlight_id=None) -> str:
     if not messages:
         body = (
             '<div class="empty"><div class="big">&#128172;</div>'
@@ -361,7 +423,10 @@ def build_chat_page(session: dict, messages: list) -> str:
         f" · {len(messages)} 条记录</span></div>"
     )
     body = head + "".join(_message_html(m) for m in messages) + _chat_nav_html(messages)
-    return _page(body, scroll_bottom=True, extra_js=_CHAT_NAV_JS)
+    extra = _CHAT_NAV_JS
+    if highlight_id:
+        extra += _JUMP_MSG_JS % int(highlight_id)
+    return _page(body, scroll_bottom=True, extra_js=extra)
 
 
 def build_search_page(keyword: str, results: list) -> str:
@@ -456,6 +521,8 @@ def _mindmap_forest(nodes: list):
     for n in nodes:
         key = n["parent_id"]
         by_parent.setdefault(key, []).append(dict(n, children=[]))
+    for kids in by_parent.values():
+        kids.sort(key=lambda c: (c.get("sort_order") or 0, c["id"]))
 
     def attach(node):
         node["children"] = [
@@ -519,54 +586,11 @@ def _has_pos(node) -> bool:
     return node.get("pos_x") is not None and node.get("pos_y") is not None
 
 
-def _layout_mindmap(root: dict):
-    h_gap, v_gap, pad = 56, 18, 32
-
-    def sub_h(node):
-        _w, h = _mm_node_size(node)
-        kids = node["children"]
-        if not kids:
-            return h
-        return max(
-            h,
-            sum(sub_h(c) for c in kids) + v_gap * (len(kids) - 1),
-        )
-
-    def place(node, x, y):
-        w, h = _mm_node_size(node)
-        total = sub_h(node)
-        node["x"] = x
-        node["y"] = y + (total - h) / 2
-        node["w"] = w
-        node["h"] = h
-        kids = node["children"]
-        if not kids:
-            return
-        kh = sum(sub_h(c) for c in kids) + v_gap * (len(kids) - 1)
-        cy = y + (total - kh) / 2
-        for child in kids:
-            place(child, x + w + h_gap, cy)
-            cy += sub_h(child) + v_gap
-
-    place(root, pad, pad)
-    flat = []
-
-    def walk(node):
-        flat.append(node)
-        for child in node["children"]:
-            walk(child)
-
-    walk(root)
-    width = max(n["x"] + n["w"] for n in flat) + pad
-    height = max(n["y"] + n["h"] for n in flat) + pad
-    return flat, width, height
-
-
 def prepare_mindmap_layout(nodes: list):
-    """补齐坐标。返回 (flat, width, height, 是否需要写回数据库)。"""
+    """补齐缺失坐标，已有位置一律不动。返回 (flat, width, height, 新坐标)。"""
     roots = _mindmap_forest(nodes)
     if not roots:
-        return [], 400, 240, False
+        return [], 400, 240, []
 
     def collect(node, acc):
         acc.append(node)
@@ -576,42 +600,39 @@ def prepare_mindmap_layout(nodes: list):
 
     h_gap, v_gap = 56, 18
     laid = []
-    assigned = False
+    newly = []
     extra_x = 0
 
     def visit(node, parent=None, index=0):
-        nonlocal assigned
         w, h = _mm_node_size(node)
         node["w"], node["h"] = w, h
         if _has_pos(node):
             node["x"] = float(node["pos_x"])
             node["y"] = float(node["pos_y"])
         else:
-            assigned = True
             if parent is None:
                 node["x"], node["y"] = 32 + extra_x, 32
             else:
                 node["x"] = parent["x"] + parent["w"] + h_gap
-                node["y"] = parent["y"] + index * (h + v_gap)
+                prevs = parent["children"][:index]
+                if prevs:
+                    last = prevs[-1]
+                    node["y"] = last["y"] + last["h"] + v_gap
+                else:
+                    node["y"] = parent["y"]
+            newly.append(node)
         for i, child in enumerate(node["children"]):
             visit(child, node, i)
 
     for root in roots:
-        subtree = collect(root, [])
-        if all(not _has_pos(n) for n in subtree):
-            chunk, width, _height = _layout_mindmap(root)
-            for n in chunk:
-                n["x"] += extra_x
-            laid.extend(chunk)
-            assigned = True
-            extra_x += width + 40
-        else:
-            visit(root)
-            laid.extend(collect(root, []))
+        visit(root)
+        chunk = collect(root, [])
+        laid.extend(chunk)
+        extra_x = max(extra_x, max(n["x"] + n["w"] for n in chunk) + 40)
     pad = 32
     width = max(n["x"] + n["w"] for n in laid) + pad
     height = max(n["y"] + n["h"] for n in laid) + pad
-    return laid, width, height, assigned
+    return laid, width, height, newly
 
 
 def build_mindmap_page(mindmap: dict, nodes: list, view=None, edges=None):
@@ -623,7 +644,7 @@ def build_mindmap_page(mindmap: dict, nodes: list, view=None, edges=None):
         " 中键拖动框选（框到的单元和连线都会选中，可一起拖动） ·"
         " 拖动空白处移动画布 · Ctrl+滚轮缩放</div>"
     )
-    laid, width, height, dirty = prepare_mindmap_layout(nodes)
+    laid, width, height, newly = prepare_mindmap_layout(nodes)
     if not laid:
         return _page(
             hint + '<div class="empty">这张导图还没有节点</div>', False, True
@@ -710,6 +731,8 @@ def build_mindmap_page(mindmap: dict, nodes: list, view=None, edges=None):
         cards.append(
             f'<div class="{cls}" data-id="{nid}" data-parent="{parent_attr}"'
             f' data-raw="{_attr_nl(raw)}"'
+            f' data-created="{html.escape(n.get("created_at") or "", quote=True)}"'
+            f' data-updated="{html.escape(n.get("updated_at") or "", quote=True)}"'
             f' style="left:{n["x"]:.0f}px;top:{n["y"]:.0f}px;{size_css}">'
             f'<div class="mm-body">{node_content_html(raw)}</div></div>'
         )
@@ -739,8 +762,8 @@ def build_mindmap_page(mindmap: dict, nodes: list, view=None, edges=None):
         extra_js=_MM_JS,
     )
     to_save = None
-    if dirty:
-        to_save = [{"id": n["id"], "x": n["x"], "y": n["y"]} for n in laid]
+    if newly:
+        to_save = [{"id": n["id"], "x": n["x"], "y": n["y"]} for n in newly]
     return page, to_save
 
 

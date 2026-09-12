@@ -24,6 +24,10 @@ QToolBar QToolButton:pressed { background: rgba(255, 255, 255, 0.95); }
 QToolBar QToolButton:checked {
     background: rgba(255, 122, 84, 0.22); color: #cf4f2e;
 }
+#autoBackupHint {
+    color: #6a738c; font-size: 11.5px;
+    padding: 0 12px 0 8px;
+}
 
 QPushButton {
     background: rgba(255, 255, 255, 0.78);
@@ -41,6 +45,19 @@ QPushButton:default:hover {
         stop:0 #7d99ff, stop:1 #5f7cf9);
 }
 
+#bodyHost { background: #edeffb; }
+#sideOverlay {
+    background: transparent;
+    border: none;
+}
+#sideClip, #sideClipView {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(237, 239, 251, 0.96), stop:1 rgba(232, 236, 250, 0.90));
+    border: none;
+}
+#sideClip {
+    border-right: 1px solid rgba(255, 255, 255, 0.92);
+}
 #sidePanel {
     background: rgba(255, 255, 255, 0.42);
     border: 1px solid rgba(255, 255, 255, 0.65);
@@ -261,19 +278,34 @@ QMenu::separator {
     background: transparent;
     border: none;
 }
+#todoSection { background: transparent; }
+#todoDoneHead {
+    color: #8b94ad; font-size: 11px; font-weight: 600;
+    padding: 3px 12px; margin: 4px 20px 0;
+    background: rgba(255, 255, 255, 0.38);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    border-radius: 999px;
+}
 #todoText { color: #2c3345; font-size: 13px; background: transparent; }
 #todoRow[done="true"] #todoText,
 #todoRowInner[done="true"] #todoText { color: #8b94ad; }
 #todoNote {
-    color: #7a84a2; font-size: 11px; background: transparent;
-    padding-top: 1px;
+    color: #6a738c; font-size: 11px;
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.82);
+    border-radius: 10px;
+    padding: 6px 9px;
 }
 #todoRow[done="true"] #todoNote,
-#todoRowInner[done="true"] #todoNote { color: #a0a6b8; }
+#todoRowInner[done="true"] #todoNote {
+    color: #9aa2b6;
+    background: rgba(255, 255, 255, 0.32);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+}
 #todoNoteEdit {
-    background: rgba(255, 255, 255, 0.72);
-    border: 1px solid rgba(79, 110, 247, 0.4);
-    border-radius: 8px; padding: 3px 7px;
+    background: rgba(255, 255, 255, 0.78);
+    border: 1px solid rgba(79, 110, 247, 0.32);
+    border-radius: 10px; padding: 6px 9px;
     font-size: 11px; color: #3a4152;
 }
 #todoMark {

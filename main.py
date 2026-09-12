@@ -337,12 +337,12 @@ def main():
                 subject_id=window.current_subject_id(),
             )
         if kind == "image":
-            db.add_message(sid, role, save_image_file(data), kind="image")
+            mid = db.add_message(sid, role, save_image_file(data), kind="image")
             db.auto_name_if_first(sid, "图片")
         else:
-            db.add_message(sid, role, data)
+            mid = db.add_message(sid, role, data)
             db.auto_name_if_first(sid, data)
-        window.notify_message_added()
+        window.notify_message_added(mid, sid)
 
     bar.saved.connect(on_saved)
 

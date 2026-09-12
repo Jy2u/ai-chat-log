@@ -14,7 +14,7 @@ _DOC_JS = r"""
     var did = ta.getAttribute("data-id");
     var timer = null;
     function save() {
-        location.href = "app://savedoc/" + did + "#" + encodeURIComponent(ta.value);
+        window.appCall("app://savedoc/" + did + "#" + encodeURIComponent(ta.value));
     }
     ta.addEventListener("input", function () {
         clearTimeout(timer);

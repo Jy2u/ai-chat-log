@@ -52,6 +52,18 @@ def parse_dated_todo(content: str):
     }, task
 
 
+def _open_sort(todo: dict):
+    return (
+        {"skip": 2, "later": 1}.get(todo.get("mark") or "", 0),
+        todo.get("sort_order") or 0,
+        -todo["id"],
+    )
+
+
+def _done_sort(todo: dict):
+    return (todo.get("sort_order") or 0, -todo["id"])
+
+
 def _group_todos(todos: list) -> list:
     """同一天的待办收成一组；无日期的单独一条。日期新的在前。"""
     buckets = {}
@@ -66,14 +78,16 @@ def _group_todos(todos: list) -> list:
     blocks = []
     for dt in sorted(buckets.keys(), reverse=True):
         group = buckets[dt]
-        group["todos"].sort(
-            key=lambda t: (
-                3 if t.get("done") else {"skip": 2, "later": 1}.get(t.get("mark") or "", 0),
-                t.get("sort_order") or 0,
-                -t["id"],
-            )
-        )
-        blocks.append({"kind": "date", **group})
+        open_todos = [t for t in group["todos"] if not t.get("done")]
+        done_todos = [t for t in group["todos"] if t.get("done")]
+        open_todos.sort(key=_open_sort)
+        done_todos.sort(key=_done_sort)
+        blocks.append({
+            "kind": "date",
+            "info": group["info"],
+            "open_todos": open_todos,
+            "done_todos": done_todos,
+        })
     for todo in undated:
         blocks.append({"kind": "plain", "todo": todo})
     return blocks
@@ -130,6 +144,7 @@ class TodoRow(QFrame):
         self._note = QLabel()
         self._note.setObjectName("todoNote")
         self._note.setWordWrap(True)
+        self._note.setAttribute(Qt.WA_StyledBackground, True)
         self._note.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._apply_note(self._note_text)
 
@@ -148,7 +163,7 @@ class TodoRow(QFrame):
 
         body = QVBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(2)
+        body.setSpacing(5)
         body.addLayout(title)
         body.addWidget(self._note)
         body.addWidget(self._note_edit)
@@ -284,14 +299,14 @@ class TodoRow(QFrame):
 
 
 class TodoDateGroup(QFrame):
-    """同一天的待办归在一个日期玻璃框下。"""
+    """同一天的待办归在一个日期玻璃框下，分未完成 / 已完成。"""
 
     toggled = Signal(int, bool)
     removed = Signal(int)
     note_changed = Signal(int, str)
     mark_changed = Signal(int, str)
 
-    def __init__(self, info: dict, todos: list, parent=None):
+    def __init__(self, info: dict, open_todos: list, done_todos: list, parent=None):
         super().__init__(parent)
         self.setObjectName("todoGroup")
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -301,24 +316,74 @@ class TodoDateGroup(QFrame):
         chip.setAttribute(Qt.WA_StyledBackground, True)
         chip.setAlignment(Qt.AlignCenter)
         chip.setProperty("tone", info["tone"])
-        chip.setToolTip(MATCH_COLORS[info["tone"]]["name"])
         chip.style().unpolish(chip)
         chip.style().polish(chip)
+
+        self._open_box = QWidget()
+        self._open_box.setObjectName("todoSection")
+        self._open_lay = QVBoxLayout(self._open_box)
+        self._open_lay.setContentsMargins(0, 0, 0, 0)
+        self._open_lay.setSpacing(2)
+
+        self._done_head = QLabel("已完成")
+        self._done_head.setObjectName("todoDoneHead")
+        self._done_head.setAlignment(Qt.AlignCenter)
+        self._done_head.setAttribute(Qt.WA_StyledBackground, True)
+
+        self._done_box = QWidget()
+        self._done_box.setObjectName("todoSection")
+        self._done_lay = QVBoxLayout(self._done_box)
+        self._done_lay.setContentsMargins(0, 0, 0, 0)
+        self._done_lay.setSpacing(2)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(4)
         lay.addWidget(chip)
-        for todo in todos:
-            row = TodoRow(todo)
-            row.setObjectName("todoRowInner")
-            row.style().unpolish(row)
-            row.style().polish(row)
-            row.toggled.connect(self.toggled)
-            row.removed.connect(self.removed)
-            row.note_changed.connect(self.note_changed)
-            row.mark_changed.connect(self.mark_changed)
-            lay.addWidget(row)
+        lay.addWidget(self._open_box)
+        lay.addWidget(self._done_head)
+        lay.addWidget(self._done_box)
+
+        for todo in open_todos:
+            self._mount_row(todo, self._open_lay)
+        for todo in done_todos:
+            self._mount_row(todo, self._done_lay)
+        self._sync_sections()
+
+    def _mount_row(self, todo: dict, into):
+        row = TodoRow(todo)
+        row.setObjectName("todoRowInner")
+        row.style().unpolish(row)
+        row.style().polish(row)
+        row.toggled.connect(self._on_row_toggled)
+        row.removed.connect(self.removed)
+        row.note_changed.connect(self.note_changed)
+        row.mark_changed.connect(self.mark_changed)
+        into.addWidget(row)
+        return row
+
+    def _on_row_toggled(self, todo_id: int, done: bool):
+        row = self.sender()
+        if isinstance(row, TodoRow):
+            self._place_row(row, done)
+        self.toggled.emit(todo_id, done)
+
+    def _place_row(self, row: TodoRow, done: bool):
+        for lay in (self._open_lay, self._done_lay):
+            idx = lay.indexOf(row)
+            if idx >= 0:
+                lay.takeAt(idx)
+                break
+        if done:
+            self._done_lay.addWidget(row)
+        else:
+            self._open_lay.addWidget(row)
+        self._sync_sections()
+
+    def _sync_sections(self):
+        has_done = self._done_lay.count() > 0
+        self._done_head.setVisible(has_done)
+        self._done_box.setVisible(has_done)
 
 
 class TodoPanel(QFrame):
@@ -437,7 +502,9 @@ class TodoPanel(QFrame):
         self._empty.setVisible(False)
         for block in _group_todos(todos):
             if block["kind"] == "date":
-                w = TodoDateGroup(block["info"], block["todos"])
+                w = TodoDateGroup(
+                    block["info"], block["open_todos"], block["done_todos"]
+                )
             else:
                 w = TodoRow(block["todo"])
             w.toggled.connect(self._toggle)

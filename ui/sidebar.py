@@ -1,7 +1,20 @@
 """主窗口：工具栏与侧栏布局。"""
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QFontMetrics
+import ctypes
+from ctypes import wintypes
+
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    QVariantAnimation,
+)
+from PySide6.QtGui import QAction, QColor, QCursor, QFont, QFontMetrics
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QApplication,
@@ -9,13 +22,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
     QSplitterHandle,
     QStyleFactory,
     QToolBar,
-    QToolButton,
     QTreeWidget,
     QVBoxLayout,
     QWidget,
@@ -42,6 +54,72 @@ from ui.widgets import (
     _enable_tree_wrap,
 )
 
+SIDE_RAIL_W = 26
+SIDE_ANIM_MS = 240
+SIDE_HOVER_MS = 0
+_WM_NCHITTEST = 0x0084
+_HTTRANSPARENT = -1
+
+
+class _MSG(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND),
+        ("message", wintypes.UINT),
+        ("wParam", wintypes.WPARAM),
+        ("lParam", wintypes.LPARAM),
+        ("time", wintypes.DWORD),
+        ("pt", wintypes.POINT),
+    ]
+
+
+class SideOverlay(QWidget):
+    """顶层浮层：窗口尺寸固定，透明区域把点击还给下面的页面。"""
+
+    def __init__(self, owner):
+        super().__init__()
+        self._owner = owner
+        self.setObjectName("sideOverlay")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+
+    def nativeEvent(self, eventType, message):
+        if eventType == b"windows_generic_MSG":
+            try:
+                msg = ctypes.cast(int(message), ctypes.POINTER(_MSG)).contents
+            except (TypeError, ValueError, OverflowError):
+                return super().nativeEvent(eventType, message)
+            if msg.message == _WM_NCHITTEST:
+                clip = getattr(self._owner, "_side_clip", None)
+                if clip is not None:
+                    # WM_NCHITTEST 给的是屏幕物理坐标，高分屏上不能直接 map。
+                    local = self.mapFromGlobal(QCursor.pos())
+                    if not clip.geometry().contains(local):
+                        return True, _HTTRANSPARENT
+        return super().nativeEvent(eventType, message)
+
+
+class SideClip(QScrollArea):
+    """只改裁切宽度，不滚动内容，避免动画时重排文字。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("sideClip")
+        self.setFrameShape(QFrame.NoFrame)
+        self.setWidgetResizable(False)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.viewport().setObjectName("sideClipView")
+        self.viewport().setAutoFillBackground(False)
+
+    def scrollContentsBy(self, dx, dy):
+        return
+
+    def ensureVisible(self, x, y, xmargin=50, ymargin=50):
+        return
+
 
 class SidebarMixin:
     # ---------- 界面搭建 ----------
@@ -63,6 +141,10 @@ class SidebarMixin:
         act_md.triggered.connect(self.show_markdown_help)
         bar.addAction(act_md)
 
+        self._auto_backup_hint = QLabel("尚未自动备份")
+        self._auto_backup_hint.setObjectName("autoBackupHint")
+        bar.addWidget(self._auto_backup_hint)
+
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         bar.addWidget(spacer)
@@ -83,9 +165,14 @@ class SidebarMixin:
             gear_btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
 
     def _build_body(self):
-        side = QWidget()
-        outer = QVBoxLayout(side)
-        outer.setContentsMargins(12, 12, 4, 12)
+        side = SideOverlay(self)
+        side.setMinimumWidth(0)
+
+        # 内容层保持展开宽度，裁切层负责露出多少，避免收起时文字被挤成多行。
+        content = QWidget()
+        content.setObjectName("sideContent")
+        outer = QVBoxLayout(content)
+        outer.setContentsMargins(8, 10, 8, 10)
         outer.setSpacing(8)
 
         self._subject_icon = _make_subject_icon()
@@ -109,6 +196,7 @@ class SidebarMixin:
         self._subject_tree.setRootIsDecorated(False)
         self._subject_tree.setIndentation(8)
         self._subject_tree.setIconSize(QSize(16, 16))
+        self._subject_tree.setMinimumWidth(0)
         self._subject_tree.setExpandsOnDoubleClick(False)
         self._subject_tree.setAllColumnsShowFocus(False)
         if fusion is not None:
@@ -142,23 +230,13 @@ class SidebarMixin:
         )
         head.setObjectName("sideHead")
         head.setWordWrap(True)
-        self._side_toggle = QToolButton()
-        self._side_toggle.setObjectName("sideToggle")
-        self._side_toggle.setText("收起")
-        self._side_toggle.setToolTip("收起侧边栏")
-        self._side_toggle.setAutoRaise(True)
-        self._side_toggle.clicked.connect(lambda: self._set_sidebar_collapsed(True))
-        head_row = QHBoxLayout()
-        head_row.setContentsMargins(0, 0, 4, 0)
-        head_row.setSpacing(0)
-        head_row.addWidget(head, 1)
-        head_row.addWidget(self._side_toggle, 0, Qt.AlignTop)
         self._tree = SessionTree()
         self._tree.setObjectName("sessionTree")
         self._tree.setHeaderHidden(True)
         self._tree.setRootIsDecorated(False)
         self._tree.setIndentation(22)
         self._tree.setIconSize(QSize(16, 16))
+        self._tree.setMinimumWidth(0)
         self._tree.setExpandsOnDoubleClick(False)
         self._tree.setAllColumnsShowFocus(False)
         if fusion is not None:
@@ -182,7 +260,7 @@ class SidebarMixin:
         self._tree.match_session_toggled.connect(self._on_match_session_toggled)
         self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._tree_menu)
-        side_lay.addLayout(head_row)
+        side_lay.addWidget(head)
         side_lay.addWidget(self._tree, 1)
 
         inner = QSplitter()
@@ -192,48 +270,57 @@ class SidebarMixin:
         inner.setStretchFactor(0, 0)
         inner.setStretchFactor(1, 1)
         inner.setSizes([168, 252])
+        inner.setMinimumWidth(0)
         inner.splitterMoved.connect(self._on_splitter_moved)
         self._watch_splitter_drag(inner)
         self._inner_split = inner
         self._subject_panel = subject_panel
+        subject_panel.setMinimumWidth(0)
+        panel.setMinimumWidth(0)
         outer.addWidget(inner)
 
-        self._side_rail = QFrame()
-        self._side_rail.setObjectName("sideRail")
-        rail_lay = QVBoxLayout(self._side_rail)
-        rail_lay.setContentsMargins(4, 10, 4, 10)
-        expand_btn = QPushButton("展\n开")
-        expand_btn.setObjectName("sideRailBtn")
-        expand_btn.setToolTip("展开侧边栏")
-        expand_btn.clicked.connect(lambda: self._set_sidebar_collapsed(False))
-        rail_lay.addWidget(expand_btn, 0, Qt.AlignTop)
-        rail_lay.addStretch(1)
-        self._side_rail.hide()
-        outer.addWidget(self._side_rail)
+        clip = SideClip(side)
+        clip.setWidget(content)
 
         self._web = QWebEngineView()
         self._page = ChatPage(self._web)
         self._page.app_action.connect(self._handle_app_action)
+        self._page.setBackgroundColor(QColor("#edeffb"))
         self._interceptor = LocalOnlyInterceptor()
         self._page.profile().setUrlRequestInterceptor(self._interceptor)
         self._web.setPage(self._page)
+        self._web.setStyleSheet("background: #edeffb;")
 
-        split = QSplitter()
-        split.setHandleWidth(6)
-        split.addWidget(side)
-        split.addWidget(self._web)
-        split.setStretchFactor(0, 0)
-        split.setStretchFactor(1, 1)
-        split.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        split.setMinimumWidth(320)
-        split.setSizes([430, 810])
-        split.splitterMoved.connect(self._on_splitter_moved)
-        self._watch_splitter_drag(split)
-        self._split = split
+        body_host = QWidget()
+        body_host.setObjectName("bodyHost")
+        body_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        body_lay = QVBoxLayout(body_host)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(0)
+        body_lay.addWidget(self._web, 1)
+        body_host.installEventFilter(self)
+
+        side.setParent(self)
+        side.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
+        side.setAttribute(Qt.WA_TranslucentBackground, True)
+        side.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        side.installEventFilter(self)
+
+        self._body_host = body_host
         self._side_inner = inner
+        self._side_clip = clip
+        self._side_content = content
         self._side_panel = panel
         self._side = side
         self._side_width = 430
+        self._side_overlay_w = SIDE_RAIL_W
+        self._side_anim = None
+        self._sidebar_collapsed = True
+        self._side_hovering = False
+        self._side_expand_timer = QTimer(self)
+        self._side_expand_timer.setSingleShot(True)
+        self._side_expand_timer.setInterval(SIDE_HOVER_MS)
+        self._side_expand_timer.timeout.connect(self._try_expand_sidebar)
 
         todo_divider = QFrame()
         todo_divider.setObjectName("todoDivider")
@@ -248,7 +335,7 @@ class SidebarMixin:
         main_lay = QHBoxLayout(main)
         main_lay.setContentsMargins(0, 0, 0, 0)
         main_lay.setSpacing(0)
-        main_lay.addWidget(split, 1)
+        main_lay.addWidget(body_host, 1)
         main_lay.addWidget(todo_divider, 0)
         main_lay.addWidget(self._todo_panel, 0)
 
@@ -265,7 +352,6 @@ class SidebarMixin:
         root.setStretchFactor(1, 0)
         root.setSizes([640, 168])
         self.setCentralWidget(root)
-        self._sidebar_collapsed = False
         if self._sidebar_user_sized:
             saved_sw = self._settings.value("subject_width", 0, type=int)
             saved_fw = self._settings.value("folder_width", 0, type=int)
@@ -275,8 +361,7 @@ class SidebarMixin:
                 self._side_width = saved_sw + saved_fw + 22
             elif saved_w >= 320:
                 self._side_width = saved_w
-        if self._settings.value("sidebar_collapsed", False, type=bool):
-            self._set_sidebar_collapsed(True)
+        self._sync_side_overlay()
 
     def _oneline_tree_width(self, tree: QTreeWidget) -> int:
         """一行完整显示所需宽度（含图标、缩进、内边距）。"""
@@ -317,7 +402,15 @@ class SidebarMixin:
                 handle.installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        if isinstance(obj, QSplitterHandle):
+        if obj is getattr(self, "_body_host", None) and event.type() == QEvent.Resize:
+            self._sync_side_overlay()
+        elif obj is getattr(self, "_side", None):
+            et = event.type()
+            if et == QEvent.Enter:
+                self._on_sidebar_enter()
+            elif et == QEvent.Leave:
+                self._on_sidebar_leave()
+        elif isinstance(obj, QSplitterHandle):
             et = event.type()
             if et == QEvent.MouseButtonPress:
                 self._user_splitting = True
@@ -361,56 +454,45 @@ class SidebarMixin:
         return TODO_PANEL_W + 8
 
     def _fit_sidebars_to_oneline(self, force=False):
-        """首次打开时按标题撑开左栏。之后不再改窗口，以免全屏时挤掉待办。"""
-        if self._sidebar_collapsed:
-            return
+        """只调整浮层里两列的宽度，不改聊天 / 导图画布尺寸。"""
         if self._sidebars_ready and not force:
             return
         sw, fw, side_w = self._needed_sidebar_sizes()
-        chat_min = 800
-        todo_w = self._todo_reserved_width()
-        locked = self.isMaximized() or self.isFullScreen()
         self._fitting_sidebars = True
         self._inner_split.setSizes([sw, fw])
-        if locked:
-            total = sum(self._split.sizes()) or (side_w + chat_min)
-            left = min(side_w, max(200, total - chat_min))
-            self._split.setSizes([left, max(chat_min, total - left)])
-            self._side_width = left
-        else:
-            need = side_w + chat_min + 24 + todo_w
-            if self.width() < need:
-                self.resize(need, max(self.height(), 740))
-            self._split.setSizes([side_w, chat_min])
-            self._side_width = side_w
-            QTimer.singleShot(
-                0, lambda: self._apply_fitted_sizes(sw, fw, side_w, chat_min)
-            )
-            return
+        self._side_width = side_w
         if getattr(self, "_todo_panel", None) is not None:
             self._todo_panel.setFixedWidth(TODO_PANEL_W)
+        self._subject_tree.doItemsLayout()
+        self._tree.doItemsLayout()
+        self._sync_side_overlay()
         QTimer.singleShot(0, self._end_fitting_sidebars)
-        self._subject_tree.doItemsLayout()
-        self._tree.doItemsLayout()
-
-    def _apply_fitted_sizes(self, sw, fw, side_w, chat_min):
-        """窗口 resize 生效后再分配，避免对话栏被旧宽度锁死。"""
-        self._inner_split.setSizes([sw, fw])
-        total = sum(self._split.sizes()) or (side_w + chat_min)
-        self._split.setSizes([side_w, max(chat_min, total - side_w)])
-        if getattr(self, "_todo_panel", None) is not None:
-            self._todo_panel.setFixedWidth(TODO_PANEL_W)
-        self._subject_tree.doItemsLayout()
-        self._tree.doItemsLayout()
-        self._end_fitting_sidebars()
 
     def _end_fitting_sidebars(self):
         self._fitting_sidebars = False
 
     def showEvent(self, event):
         super().showEvent(event)
+        side = getattr(self, "_side", None)
+        if side is not None:
+            side.show()
+            self._sync_side_overlay()
         if not self._sidebars_ready:
             QTimer.singleShot(0, self._finish_sidebar_setup)
+
+    def hideEvent(self, event):
+        side = getattr(self, "_side", None)
+        if side is not None:
+            side.hide()
+        super().hideEvent(event)
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._sync_side_overlay()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_side_overlay()
 
     def _finish_sidebar_setup(self):
         self._fit_sidebars_to_oneline()
@@ -432,31 +514,135 @@ class SidebarMixin:
             self._settings.setValue("subject_width", inner_sizes[0])
         if len(inner_sizes) > 1 and inner_sizes[1] >= 120:
             self._settings.setValue("folder_width", inner_sizes[1])
-        outer = self._split.sizes()
-        if outer and outer[0] > 80:
-            self._side_width = outer[0]
+        if inner_sizes:
+            self._side_width = sum(inner_sizes) + 22
             self._settings.setValue("sidebar_width", self._side_width)
+            self._side_overlay_w = self._sidebar_content_width()
+            self._sync_side_overlay()
+
+    def _sidebar_content_width(self) -> int:
+        return max(320, int(self._side_width or 430))
+
+    def _side_anim_running(self) -> bool:
+        anim = getattr(self, "_side_anim", None)
+        return (
+            anim is not None
+            and anim.state() == QAbstractAnimation.State.Running
+        )
+
+    def _sidebar_window_width(self) -> int:
+        # 收起静止时窗口必须只占细条，否则会盖住对话里的按钮。
+        if self._side_anim_running() or not self._sidebar_collapsed:
+            return self._sidebar_content_width()
+        return SIDE_RAIL_W
+
+    def _sync_side_clip_width(self):
+        clip = getattr(self, "_side_clip", None)
+        if clip is None:
+            return
+        w = max(SIDE_RAIL_W, int(round(self._side_overlay_w)))
+        host = getattr(self, "_body_host", None)
+        parent = clip.parentWidget()
+        if host is not None:
+            h = host.height()
+        elif parent is not None:
+            h = parent.height()
+        else:
+            h = clip.height()
+        if clip.width() != w or clip.height() != h:
+            clip.setGeometry(0, 0, w, max(1, h))
+        content = getattr(self, "_side_content", None)
+        if content is None:
+            return
+        cw = self._sidebar_content_width()
+        if content.width() != cw or content.height() != h:
+            content.setFixedSize(cw, max(1, h))
+
+    def _sync_side_overlay(self):
+        host = getattr(self, "_body_host", None)
+        side = getattr(self, "_side", None)
+        if host is None or side is None:
+            return
+        win_w = self._sidebar_window_width()
+        h = host.height()
+        top_left = host.mapToGlobal(QPoint(0, 0))
+        geo = QRect(top_left.x(), top_left.y(), win_w, h)
+        if side.minimumWidth() != 0:
+            side.setMinimumWidth(0)
+            side.setMaximumWidth(16777215)
+        if side.geometry() != geo:
+            side.setGeometry(geo)
+        self._sync_side_clip_width()
+        if not self._side_anim_running():
+            side.raise_()
+        if self.isVisible() and not side.isVisible():
+            side.show()
+
+    def _on_sidebar_enter(self):
+        self._side_hovering = True
+        if not self._sidebar_collapsed:
+            return
+        self._side_expand_timer.stop()
+        self._expand_sidebar_hover()
+
+    def _on_sidebar_leave(self):
+        self._side_hovering = False
+        self._side_expand_timer.stop()
+        if QApplication.activePopupWidget() is not None:
+            return
+        if QApplication.mouseButtons() != Qt.NoButton:
+            return
+        self._collapse_sidebar_hover()
+
+    def _try_expand_sidebar(self):
+        if not self._side_hovering or not self._side.underMouse():
+            return
+        self._expand_sidebar_hover()
+
+    def _expand_sidebar_hover(self):
+        target = self._sidebar_content_width()
+        self._sidebar_collapsed = False
+        self._sync_side_overlay()
+        self._animate_sidebar(target)
+
+    def _collapse_sidebar_hover(self):
+        if QApplication.activePopupWidget() is not None:
+            return
+        self._side_expand_timer.stop()
+        self._sidebar_collapsed = True
+        self._animate_sidebar(SIDE_RAIL_W)
+
+    def _animate_sidebar(self, target: float):
+        current = float(self._side_overlay_w)
+        if abs(current - target) < 1:
+            self._side_overlay_w = target
+            self._sync_side_overlay()
+            return
+        anim = getattr(self, "_side_anim", None)
+        if anim is not None:
+            anim.stop()
+        anim = QVariantAnimation(self)
+        anim.setDuration(SIDE_ANIM_MS)
+        anim.setStartValue(current)
+        anim.setEndValue(float(target))
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.valueChanged.connect(self._on_side_anim)
+        anim.finished.connect(self._on_side_anim_finished)
+        self._side_anim = anim
+        anim.start()
+
+    def _on_side_anim(self, value):
+        self._side_overlay_w = float(value)
+        self._sync_side_clip_width()
+
+    def _on_side_anim_finished(self):
+        self._sync_side_overlay()
 
     def _set_sidebar_collapsed(self, collapsed: bool):
-        if collapsed and not self._sidebar_collapsed:
-            self._save_side_widths(remember_user=False)
         self._sidebar_collapsed = collapsed
-        sizes = self._split.sizes()
         if collapsed:
-            if sizes and sizes[0] > 80:
-                self._side_width = sizes[0]
-            self._side_inner.hide()
-            self._side_rail.show()
-            rest = sizes[1] if len(sizes) > 1 else 800
-            self._split.setSizes([48, max(400, rest)])
+            self._animate_sidebar(SIDE_RAIL_W)
         else:
-            self._side_rail.hide()
-            self._side_inner.show()
-            total = sum(sizes) if sizes else 1240
-            w = self._side_width or 430
-            self._split.setSizes([w, max(200, total - w)])
-            self._fit_sidebars_to_oneline(force=True)
-        self._settings.setValue("sidebar_collapsed", collapsed)
-        self._settings.setValue("sidebar_width", self._side_width)
+            self._expand_sidebar_hover()
 
 

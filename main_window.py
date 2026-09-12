@@ -62,4 +62,5 @@ class MainWindow(SidebarMixin, TreeMixin, OpsMixin, ViewMixin, QMainWindow):
         self._init_subject_selection()
         self.reload_subjects()
         self.reload_sessions()
+        self._setup_auto_backup()
 
