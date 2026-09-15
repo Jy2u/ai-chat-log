@@ -1,6 +1,9 @@
 """SQLite 存储层：会话与消息。"""
 
 import os
+import json
+import base64
+import binascii
 import re
 import shutil
 import sqlite3
@@ -64,6 +67,27 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session
                 ON messages(session_id);
+            CREATE TABLE IF NOT EXISTS external_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                session_id INTEGER NOT NULL
+                    REFERENCES sessions(id) ON DELETE CASCADE,
+                workspace TEXT NOT NULL DEFAULT '',
+                raw_metadata TEXT NOT NULL DEFAULT '',
+                imported_at TEXT NOT NULL,
+                UNIQUE(source, external_id)
+            );
+            CREATE TABLE IF NOT EXISTS external_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                external_session_id TEXT NOT NULL,
+                external_message_id TEXT NOT NULL,
+                message_id INTEGER NOT NULL
+                    REFERENCES messages(id) ON DELETE CASCADE,
+                raw_json TEXT NOT NULL DEFAULT '',
+                UNIQUE(source, external_session_id, external_message_id)
+            );
             CREATE TABLE IF NOT EXISTS mindmaps (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -218,7 +242,54 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
         self._migrate_session_tags()
         self._ensure_todos_table()
         self._ensure_stash_table()
+        self._cleanup_cursor_import_noise()
         self.conn.commit()
+
+    def _cleanup_cursor_import_noise(self):
+        """旧导入数据也收敛为：用户原文 + 每轮最后一条 AI 输出。"""
+        labels = (
+            "工具调用", "终端", "思考", "计划", "读取文件", "编辑文件",
+            "创建文件", "搜索", "浏览器",
+        )
+        rows = self.conn.execute(
+            "SELECT m.id, m.content FROM messages m"
+            " JOIN external_messages e ON e.message_id = m.id"
+            " WHERE e.source = 'cursor'"
+        ).fetchall()
+        pure_label = re.compile(
+            r"^\*\*(?:" + "|".join(map(re.escape, labels))
+            + r")\*\*(?:\s+(?:`[^`]+`|(?:call-|tool_|fc_)[^\n]*))?\s*$",
+            re.IGNORECASE,
+        )
+        ids = [r["id"] for r in rows if pure_label.match((r["content"] or "").strip())]
+        if ids:
+            marks = ",".join("?" for _ in ids)
+            self.conn.execute(f"DELETE FROM messages WHERE id IN ({marks})", ids)
+        sessions = self.conn.execute(
+            "SELECT session_id FROM external_sessions WHERE source = 'cursor'"
+        ).fetchall()
+        for session in sessions:
+            messages = self.conn.execute(
+                "SELECT m.id, m.role FROM messages m"
+                " JOIN external_messages e ON e.message_id = m.id"
+                " WHERE m.session_id = ? AND e.source = 'cursor' ORDER BY m.id",
+                (session["session_id"],),
+            ).fetchall()
+            remove = []
+            pending_ai = None
+            for message in messages:
+                if message["role"] == "user":
+                    if pending_ai is not None:
+                        pending_ai = None
+                    continue
+                if pending_ai is not None:
+                    remove.append(pending_ai)
+                pending_ai = message["id"]
+            if remove:
+                marks = ",".join("?" for _ in remove)
+                self.conn.execute(
+                    f"DELETE FROM messages WHERE id IN ({marks})", remove
+                )
 
     def _table_cols(self, table: str) -> list:
         return [
@@ -952,6 +1023,126 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
         )
         self.conn.commit()
         return cur.lastrowid
+
+    def imported_external_ids(self, source: str) -> set:
+        rows = self.conn.execute(
+            "SELECT external_id FROM external_sessions WHERE source = ?",
+            ((source or "").strip().lower(),),
+        ).fetchall()
+        return {r["external_id"] for r in rows}
+
+    def import_cursor_conversation(self, info, messages, folder_id: int) -> int:
+        return self.import_external_conversation("cursor", info, messages, folder_id)
+
+    def import_external_conversation(
+        self, source: str, info, messages, folder_id: int
+    ) -> int:
+        """把 Cursor/Codex 会话作为一个新副本原子写入指定文件夹。"""
+        source = (source or "").strip().lower()
+        if source not in ("cursor", "codex"):
+            raise ValueError("不支持的导入来源")
+        folder = self.get_folder(folder_id)
+        if not folder:
+            raise ValueError("目标文件夹不存在")
+        order = self._mixed_front_sort(folder["subject_id"], folder_id=folder_id)
+        created = (
+            datetime.fromtimestamp(info.created_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+            if info.created_ms else _now()
+        )
+        updated = (
+            datetime.fromtimestamp(info.updated_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+            if info.updated_ms else created
+        )
+        written_images = []
+        try:
+            # 表结构保留唯一键以兼容旧数据库；每次导入使用独立实例键，
+            # 原始 composerId 仍完整保存在 metadata 中。
+            instance_external_id = info.composer_id
+            exists = self.conn.execute(
+                "SELECT 1 FROM external_sessions"
+                " WHERE source = ? AND external_id = ?",
+                (source, instance_external_id),
+            ).fetchone()
+            if exists:
+                instance_external_id = f"{info.composer_id}#{uuid.uuid4().hex}"
+            cur = self.conn.execute(
+                "INSERT INTO sessions"
+                " (name, created_at, updated_at, auto_named, folder_id, subject_id,"
+                " sort_order, source) VALUES (?, ?, ?, 0, ?, ?, ?, ?)",
+                (info.title, created, updated, folder_id, folder["subject_id"], order, source),
+            )
+            session_id = cur.lastrowid
+            metadata = {
+                "composerId": info.composer_id, "workspace": info.workspace,
+                "createdAt": info.created_ms, "updatedAt": info.updated_ms,
+                "mode": info.mode, "turnCount": info.message_count,
+            }
+            self.conn.execute(
+                "INSERT INTO external_sessions"
+                " (source, external_id, session_id, workspace, raw_metadata, imported_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (source, instance_external_id, session_id, info.workspace,
+                 json.dumps(metadata, ensure_ascii=False), _now()),
+            )
+            for msg in messages:
+                content = msg.content
+                kind = getattr(msg, "kind", "text")
+                if kind == "image":
+                    content = self._save_external_image(content)
+                    written_images.append(content)
+                mcur = self.conn.execute(
+                    "INSERT INTO messages"
+                    " (session_id, role, content, kind, created_at)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (session_id, msg.role, content, kind, msg.created_at),
+                )
+                self.conn.execute(
+                    "INSERT INTO external_messages"
+                    " (source, external_session_id, external_message_id, message_id, raw_json)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (source, instance_external_id, msg.external_id, mcur.lastrowid, msg.raw_json),
+                )
+            self.conn.commit()
+            return session_id
+        except Exception:
+            self.conn.rollback()
+            for name in written_images:
+                try:
+                    os.remove(os.path.join(IMAGES_DIR, name))
+                except OSError:
+                    pass
+            raise
+
+    def _save_external_image(self, source: str) -> str:
+        """把本地图片或 data URL 安全复制到 data/images。"""
+        raw = None
+        ext = ".png"
+        if source.startswith("data:image/"):
+            try:
+                header, encoded = source.split(",", 1)
+                mime = header[5:].split(";", 1)[0].lower()
+                ext = {"jpeg": ".jpg", "jpg": ".jpg", "gif": ".gif", "webp": ".webp", "bmp": ".bmp"}.get(mime, ".png")
+                raw = base64.b64decode(encoded, validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise ValueError("Codex 图片数据损坏") from exc
+        else:
+            path = os.path.abspath(os.path.expanduser(source))
+            if not os.path.isfile(path):
+                raise ValueError(f"Cursor 图片文件不存在：{path}")
+            ext = os.path.splitext(path)[1].lower()
+            if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
+                ext = ".png"
+            with open(path, "rb") as handle:
+                raw = handle.read()
+        if not raw:
+            raise ValueError("图片内容为空")
+        if len(raw) > 50 * 1024 * 1024:
+            raise ValueError("单张图片超过 50 MB，已拒绝导入")
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        name = uuid.uuid4().hex + ext
+        with open(os.path.join(IMAGES_DIR, name), "xb") as handle:
+            handle.write(raw)
+        return name
 
     def list_sessions(self, subject_id=None) -> list:
         """返回 [{id, name, created_at, folder_id, subject_id, count}]，新建的在前。"""

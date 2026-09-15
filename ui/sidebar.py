@@ -263,6 +263,7 @@ class SidebarMixin:
         self._tree.itemExpanded.connect(self._on_folder_toggled)
         self._tree.itemCollapsed.connect(self._on_folder_toggled)
         self._tree.match_clicked.connect(self._on_match_clicked)
+        self._tree.import_clicked.connect(self.import_external_conversation)
         self._tree.match_cancelled.connect(self._exit_match_mode)
         self._tree.match_session_toggled.connect(self._on_match_session_toggled)
         self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -682,5 +683,3 @@ class SidebarMixin:
             self._animate_sidebar(SIDE_RAIL_W)
         else:
             self._expand_sidebar_hover()
-
-
