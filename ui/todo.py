@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ui.style import apply_glass_shadow
 from ui.widgets import MATCH_COLORS
 
 TODO_PANEL_W = 260
@@ -400,6 +401,7 @@ class TodoPanel(QFrame):
         glass = QFrame()
         glass.setObjectName("todoGlass")
         glass.setAttribute(Qt.WA_StyledBackground, True)
+        apply_glass_shadow(glass)
 
         title = QLabel("待办")
         title.setObjectName("todoTitle")

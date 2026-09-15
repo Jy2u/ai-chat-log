@@ -37,9 +37,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
-    QDialogButtonBox,
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -54,6 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 from db import DATA_DIR, IMAGES_DIR
+from ui.style import apply_glass_shadow
 
 # 树节点上挂的数据角色
 ROLE_KIND = Qt.UserRole  # "folder" / "session" / "mindmap" / "document"
@@ -78,20 +77,20 @@ _TAG_SPECS = {
     "cursor": {
         "label": "Cursor",
         "fg": QColor("#2a4ec4"),
-        "g0": QColor(190, 208, 255, 170),
-        "g1": QColor(74, 99, 240, 78),
+        "g0": QColor(190, 208, 255, 220),
+        "g1": QColor(74, 99, 240, 118),
     },
     "codex": {
         "label": "Codex",
         "fg": QColor("#0b6b5c"),
-        "g0": QColor(170, 232, 214, 170),
-        "g1": QColor(32, 168, 140, 78),
+        "g0": QColor(170, 232, 214, 220),
+        "g1": QColor(32, 168, 140, 118),
     },
     "done": {
         "label": "已完成",
         "fg": QColor("#187a48"),
-        "g0": QColor(176, 232, 198, 170),
-        "g1": QColor(46, 168, 108, 72),
+        "g0": QColor(176, 232, 198, 220),
+        "g1": QColor(46, 168, 108, 112),
     },
 }
 
@@ -111,31 +110,31 @@ MATCH_COLORS = {
     "orange": {
         "name": "亮橙色",
         "swatch": QColor("#ff9a3d"),
-        "fill": QColor(255, 154, 61, 125),
+        "fill": QColor(255, 154, 61, 180),
         "border": QColor("#ff8a2a"),
     },
     "pink": {
         "name": "淡粉色",
         "swatch": QColor("#ffc2d4"),
-        "fill": QColor(255, 194, 212, 140),
+        "fill": QColor(255, 194, 212, 190),
         "border": QColor("#f39ab3"),
     },
     "blue": {
         "name": "淡蓝色",
         "swatch": QColor("#b4d4ff"),
-        "fill": QColor(180, 212, 255, 145),
+        "fill": QColor(180, 212, 255, 195),
         "border": QColor("#7eb0f0"),
     },
     "gray": {
         "name": "灰色",
         "swatch": QColor("#c5cad3"),
-        "fill": QColor(197, 202, 211, 150),
+        "fill": QColor(197, 202, 211, 200),
         "border": QColor("#9aa1ad"),
     },
     "purple": {
         "name": "淡紫色",
         "swatch": QColor("#d4c2f5"),
-        "fill": QColor(212, 194, 245, 145),
+        "fill": QColor(212, 194, 245, 195),
         "border": QColor("#b89ae0"),
     },
 }
@@ -296,11 +295,7 @@ class GlassNoteDialog(QDialog):
         panel = QFrame()
         panel.setObjectName("glassNotePanel")
         panel.setAttribute(Qt.WA_StyledBackground, True)
-        shadow = QGraphicsDropShadowEffect(panel)
-        shadow.setBlurRadius(32)
-        shadow.setOffset(0, 10)
-        shadow.setColor(QColor(70, 90, 140, 55))
-        panel.setGraphicsEffect(shadow)
+        apply_glass_shadow(panel, "dialog")
 
         title = QLabel("会话备注")
         title.setObjectName("glassNoteTitle")
@@ -321,6 +316,7 @@ class GlassNoteDialog(QDialog):
         ok.setDefault(True)
         ok.setCursor(Qt.PointingHandCursor)
         ok.clicked.connect(self.accept)
+        apply_glass_shadow(ok, "button")
 
         btns = QHBoxLayout()
         btns.setContentsMargins(0, 0, 0, 0)
@@ -337,7 +333,7 @@ class GlassNoteDialog(QDialog):
         inner.addLayout(btns)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 16, 20, 22)
+        outer.setContentsMargins(28, 22, 28, 34)
         outer.addWidget(panel)
         self._edit.setFocus()
         self._edit.selectAll()
@@ -397,11 +393,7 @@ class SettingsDialog(QDialog):
         panel = QFrame()
         panel.setObjectName("glassNotePanel")
         panel.setAttribute(Qt.WA_StyledBackground, True)
-        shadow = QGraphicsDropShadowEffect(panel)
-        shadow.setBlurRadius(32)
-        shadow.setOffset(0, 10)
-        shadow.setColor(QColor(70, 90, 140, 55))
-        panel.setGraphicsEffect(shadow)
+        apply_glass_shadow(panel, "dialog")
 
         title = QLabel("设置")
         title.setObjectName("glassNoteTitle")
@@ -436,6 +428,7 @@ class SettingsDialog(QDialog):
         close.setObjectName("glassNoteOk")
         close.setCursor(Qt.PointingHandCursor)
         close.clicked.connect(self.reject)
+        apply_glass_shadow(close, "button")
 
         btns = QHBoxLayout()
         btns.addStretch(1)
@@ -454,7 +447,7 @@ class SettingsDialog(QDialog):
         inner.addLayout(btns)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 16, 20, 22)
+        outer.setContentsMargins(28, 22, 28, 34)
         outer.addWidget(panel)
 
     def mousePressEvent(self, event):
@@ -534,24 +527,24 @@ class SessionTreeDelegate(QStyledItemDelegate):
         if float_t > 0.02:
             shadow = bubble.adjusted(2, 5, -2, 4)
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(70, 90, 150, int(48 * float_t)))
+            painter.setBrush(QColor(70, 90, 150, int(72 * float_t)))
             painter.drawRoundedRect(shadow, 12, 12)
         path = QPainterPath()
         path.addRoundedRect(QRectF(bubble), 12, 12)
         if spec is not None:
             fill = QColor(spec["fill"])
-            extra = 48 if selected else int(48 * float_t)
+            extra = 36 if selected else int(36 * float_t)
             fill.setAlpha(min(255, fill.alpha() + extra))
             painter.setBrush(fill)
             painter.setPen(QPen(spec["border"], 1.4))
             painter.drawPath(path)
         elif card:
             if selected:
-                fill_a, border_a, hi_a = 220, 250, 255
+                fill_a, border_a, hi_a = 240, 255, 255
             else:
-                fill_a = int(158 + 48 * float_t)
-                border_a = int(220 + 25 * float_t)
-                hi_a = int(230 + 25 * float_t)
+                fill_a = int(200 + 36 * float_t)
+                border_a = int(232 + 20 * float_t)
+                hi_a = 255
             painter.setBrush(QColor(255, 255, 255, fill_a))
             painter.setPen(QPen(QColor(255, 255, 255, border_a), 1.25))
             painter.drawPath(path)
@@ -561,6 +554,13 @@ class SessionTreeDelegate(QStyledItemDelegate):
                 bubble.top() + 1,
                 bubble.right() - 12,
                 bubble.top() + 1,
+            )
+            painter.setPen(QPen(QColor(146, 162, 205, int(70 + 40 * float_t)), 1))
+            painter.drawLine(
+                bubble.left() + 12,
+                bubble.bottom() - 1,
+                bubble.right() - 12,
+                bubble.bottom() - 1,
             )
         if matching_session and iid in match_sel:
             dash = QPainterPath()
@@ -636,7 +636,7 @@ class SessionTreeDelegate(QStyledItemDelegate):
             meta_font.setBold(False)
             painter.save()
             painter.setFont(meta_font)
-            painter.setPen(QColor("#8b94ad"))
+            painter.setPen(QColor("#737d9c"))
             fm = QFontMetrics(meta_font)
             painter.drawText(
                 meta_rect,
@@ -712,12 +712,12 @@ class SessionTreeDelegate(QStyledItemDelegate):
             painter.setPen(QPen(QColor(74, 99, 240)))
             text_color = QColor("#ffffff")
         elif hover:
-            painter.setBrush(QColor(255, 255, 255, 230))
-            painter.setPen(QPen(QColor(74, 99, 240, 160)))
+            painter.setBrush(QColor(255, 255, 255, 248))
+            painter.setPen(QPen(QColor(74, 99, 240, 180)))
             text_color = QColor("#4a63f0")
         else:
-            painter.setBrush(QColor(255, 255, 255, 175))
-            painter.setPen(QPen(QColor(170, 180, 210, 200)))
+            painter.setBrush(QColor(255, 255, 255, 220))
+            painter.setPen(QPen(QColor(146, 162, 205, 180)))
             text_color = QColor("#5d6684")
         painter.drawPath(path)
         font = QFont(painter.font())
@@ -734,8 +734,8 @@ class SessionTreeDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(QRectF(btn), 8, 8)
-        painter.setBrush(QColor(255, 255, 255, 230 if hover else 175))
-        painter.setPen(QPen(QColor(74, 99, 240, 160) if hover else QColor(170, 180, 210, 200)))
+        painter.setBrush(QColor(255, 255, 255, 248 if hover else 220))
+        painter.setPen(QPen(QColor(74, 99, 240, 180) if hover else QColor(146, 162, 205, 180)))
         painter.drawPath(path)
         font = QFont(painter.font())
         font.setPointSize(9)
@@ -755,7 +755,7 @@ class SessionTreeDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(QPen(QColor("#4a63f0"), 1.4))
-        painter.setBrush(QColor(74, 99, 240) if checked else QColor(255, 255, 255, 200))
+        painter.setBrush(QColor(74, 99, 240) if checked else QColor(255, 255, 255, 236))
         painter.drawEllipse(box)
         if checked:
             painter.setPen(QPen(QColor("#ffffff"), 1.8))
@@ -971,8 +971,13 @@ class SessionTree(QTreeWidget):
         tip.setAttribute(Qt.WA_StyledBackground, True)
         tip.setStyleSheet(
             "#sessionNoteTip {"
-            " background: rgba(40, 44, 60, 0.94); color: #eef1fb;"
-            " border: none; padding: 6px 10px; border-radius: 8px;"
+            " background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+            "   stop:0 rgba(48, 53, 72, 0.97), stop:1 rgba(33, 37, 52, 0.97));"
+            " color: #eef1fb;"
+            " border: 1px solid rgba(255, 255, 255, 0.16);"
+            " border-top: 1px solid rgba(255, 255, 255, 0.32);"
+            " border-bottom: 1px solid rgba(0, 0, 0, 0.35);"
+            " padding: 6px 10px; border-radius: 10px;"
             " font-size: 12px;"
             "}"
         )
@@ -1290,17 +1295,68 @@ class MarkdownHelpDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("glassNoteDialog")
         self.setWindowTitle("Markdown 语法")
-        self.resize(720, 620)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(16, 14, 16, 12)
-        lay.setSpacing(10)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setModal(True)
+        self.resize(760, 640)
+        self._drag_pos = None
+
+        panel = QFrame()
+        panel.setObjectName("glassNotePanel")
+        panel.setAttribute(Qt.WA_StyledBackground, True)
+        apply_glass_shadow(panel, "dialog")
+
+        title = QLabel("Markdown 语法")
+        title.setObjectName("glassNoteTitle")
+        title.setAlignment(Qt.AlignCenter)
+
         browser = QTextBrowser()
+        browser.setObjectName("glassHelpBrowser")
         browser.setOpenExternalLinks(False)
         from render_doc import markdown_help_html
 
         browser.setHtml(markdown_help_html())
-        lay.addWidget(browser)
-        box = QDialogButtonBox(QDialogButtonBox.Ok)
-        box.accepted.connect(self.accept)
-        lay.addWidget(box)
+
+        close = QPushButton("关闭")
+        close.setObjectName("glassNoteOk")
+        close.setCursor(Qt.PointingHandCursor)
+        close.clicked.connect(self.accept)
+        apply_glass_shadow(close, "button")
+
+        btns = QHBoxLayout()
+        btns.setContentsMargins(0, 0, 0, 0)
+        btns.addStretch(1)
+        btns.addWidget(close)
+
+        inner = QVBoxLayout(panel)
+        inner.setContentsMargins(18, 16, 18, 16)
+        inner.setSpacing(12)
+        inner.addWidget(title, 0, Qt.AlignHCenter)
+        inner.addWidget(browser, 1)
+        inner.addLayout(btns)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(28, 22, 28, 34)
+        outer.addWidget(panel)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = (
+                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)

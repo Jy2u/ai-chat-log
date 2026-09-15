@@ -42,6 +42,7 @@ from ui.icons import (
     _make_subject_icon,
 )
 from ui.stash import StashPanel
+from ui.style import apply_glass_shadow
 from ui.todo import TODO_PANEL_W, TodoPanel
 from ui.widgets import (
     ChatPage,
@@ -191,6 +192,8 @@ class SidebarMixin:
 
         subject_panel = QFrame()
         subject_panel.setObjectName("sidePanel")
+        subject_panel.setAttribute(Qt.WA_StyledBackground, True)
+        apply_glass_shadow(subject_panel)
         sub_lay = QVBoxLayout(subject_panel)
         sub_lay.setContentsMargins(6, 6, 6, 8)
         sub_lay.setSpacing(2)
@@ -229,6 +232,8 @@ class SidebarMixin:
 
         panel = QFrame()
         panel.setObjectName("sidePanel")
+        panel.setAttribute(Qt.WA_StyledBackground, True)
+        apply_glass_shadow(panel)
         side_lay = QVBoxLayout(panel)
         side_lay.setContentsMargins(6, 6, 6, 8)
         side_lay.setSpacing(2)
@@ -293,7 +298,7 @@ class SidebarMixin:
         self._web = QWebEngineView()
         self._page = ChatPage(self._web)
         self._page.app_action.connect(self._handle_app_action)
-        self._page.setBackgroundColor(QColor("#e6ebf8"))
+        self._page.setBackgroundColor(QColor("#e4eafc"))
         self._interceptor = LocalOnlyInterceptor()
         self._page.profile().setUrlRequestInterceptor(self._interceptor)
         self._web.setPage(self._page)

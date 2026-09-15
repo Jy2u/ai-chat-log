@@ -152,26 +152,47 @@ def markdown_help_html() -> str:
     return f"""
 <style>
 body {{ font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-       color: #2c3345; background: #edf0fa; margin: 0; }}
+       color: #2c3345;
+       background: linear-gradient(160deg, #e3eaff 0%, #eaeffc 45%, #f0e8f8 100%);
+       margin: 0; }}
 .md-wrap {{ padding: 8px 4px 18px; }}
-.md-lead {{ color: #5a6278; font-size: 13px; margin: 0 8px 14px; line-height: 1.6; }}
+.md-lead {{ color: #565f7c; font-size: 13px; margin: 0 8px 14px; line-height: 1.6; }}
 .md-item {{
-    background: rgba(255,255,255,.82);
-    border: 1px solid rgba(165,175,205,.45);
+    background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(240,244,255,.84));
+    border: 1px solid rgba(255,255,255,.92);
+    border-top-color: #ffffff;
+    border-bottom-color: rgba(146,162,205,.38);
+    box-shadow: 0 18px 44px rgba(58,78,130,.20),
+                0 4px 12px rgba(58,78,130,.10),
+                inset 0 1px 0 rgba(255,255,255,.95);
     border-radius: 12px; padding: 12px 14px; margin: 0 4px 10px;
 }}
 .md-name {{ font-weight: 700; font-size: 14px; color: #2a3144; }}
-.md-rule {{ color: #5b647c; font-size: 12.5px; margin: 4px 0 8px; }}
+.md-rule {{ color: #565f7c; font-size: 12.5px; margin: 4px 0 8px; }}
 .md-cols {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
-.md-cap {{ font-size: 11px; color: #7a8298; margin-bottom: 4px; }}
+.md-cap {{ font-size: 11px; color: #656e88; margin-bottom: 4px; }}
 pre, .help-pre {{
     margin: 0; white-space: pre-wrap; word-break: break-all;
-    background: #1e2230; color: #e8ecf8; border-radius: 8px;
+    background: linear-gradient(180deg, #262b3c, #181c29);
+    color: #e8ecf8; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,.16);
+    border-top-color: rgba(255,255,255,.3);
+    border-bottom-color: rgba(0,0,0,.5);
+    box-shadow: 0 12px 30px rgba(14,18,34,.28),
+                0 3px 8px rgba(14,18,34,.16),
+                inset 0 1px 0 rgba(255,255,255,.16);
     padding: 8px 10px; font-size: 12.5px; font-family: Consolas, monospace;
 }}
 .md-out {{
-    background: #f7f8fd; border-radius: 8px; padding: 6px 10px;
-    border: 1px solid rgba(165,175,205,.35); font-size: 13px;
+    background: linear-gradient(180deg, rgba(255,255,255,.88), rgba(244,247,255,.78));
+    border-radius: 8px; padding: 6px 10px;
+    border: 1px solid rgba(255,255,255,.92);
+    border-top-color: #ffffff;
+    border-bottom-color: rgba(146,162,205,.38);
+    box-shadow: 0 12px 30px rgba(58,78,130,.16),
+                0 3px 8px rgba(58,78,130,.08),
+                inset 0 1px 0 rgba(255,255,255,.92);
+    font-size: 13px;
 }}
 .md-out h1, .md-out h2, .md-out h3, .md-out h4, .md-out h5, .md-out h6 {{
     margin: .2em 0;
@@ -179,14 +200,20 @@ pre, .help-pre {{
 .md-out ul, .md-out ol {{ margin: .2em 0 .2em 1.2em; padding: 0; }}
 .md-out blockquote {{
     margin: .2em 0; padding: .2em .8em; border-left: 3px solid #7a8cff;
-    color: #4a5166; background: #eef1fb;
+    color: #454e68;
+    background: linear-gradient(180deg, rgba(240,243,255,.9), rgba(228,234,255,.8));
 }}
 .md-out table {{ border-collapse: collapse; }}
 .md-out th, .md-out td {{
-    border: 1px solid #c5cce0; padding: 3px 8px; font-size: 12.5px;
+    border: 1px solid rgba(155,166,200,.75); padding: 3px 8px; font-size: 12.5px;
+}}
+.md-out th {{
+    background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(242,246,255,.7));
 }}
 .md-out code {{
-    background: #eceff8; padding: 1px 5px; border-radius: 4px; font-size: 12.5px;
+    background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(242,246,255,.7));
+    border: 1px solid rgba(140,155,200,.42);
+    padding: 1px 5px; border-radius: 4px; font-size: 12.5px;
 }}
 </style>
 <div class="md-wrap">
