@@ -29,6 +29,7 @@ render_doc.py      Markdown 文档渲染
 render_css.py      渲染层共用 CSS
 render_mindmap_js.py  思维导图页内 JS（约 1000 行）
 autostart.py       开机自启（写注册表）
+cursor_import.py   Cursor 对话导出文件导入（含图片）
 ui/                Qt 界面层
   widgets.py       通用控件（约 1200 行）
   tree.py          左侧树：课题 / 文件夹 / 会话
@@ -39,6 +40,7 @@ ui/                Qt 界面层
   stash.py         底部常驻栏
   style.py         QSS 主题（liquid-glass 风格）
   icons.py         程序内图标
+  cursor_import_dialog.py  Cursor 导入对话框
 ui/icons.py 之外的资源在 data/katex/ 与 vendor/katex/（KaTeX 字体与脚本）
 ```
 
