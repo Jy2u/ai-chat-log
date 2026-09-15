@@ -1,6 +1,12 @@
 # 个人数据：会话 / 待办 / 导图 / 文档
 data/chatlog.db
 data/chatlog.db-*
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.vscdb
+*.vscdb-*
 
 # 聊天图片
 data/images/
@@ -8,6 +14,24 @@ data/images/
 # 运行时缓存与崩溃日志
 data/view.html
 data/last_error.txt
+*.log
+*.dmp
+
+# 本地导出、测试聊天和第三方参考源码
+our-get-cursor-chat/
+out-get-codex-from-cursor-chat/
+outside-sources/
+exported-chats/
+exports/
+backups/
+skill.md
+
+# 本机配置与密钥文件
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
 
 # Python
 __pycache__/
@@ -16,6 +40,11 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.uv-cache/
+.uv-python/
 
 # 自己看的推送备忘，不进仓库
 github.md

@@ -7,8 +7,8 @@ import time
 import zipfile
 from datetime import datetime
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMenu, QMessageBox
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QInputDialog, QMenu, QMessageBox
 
 import render
 from db import DATA_DIR, IMAGES_DIR
@@ -23,7 +23,9 @@ from ui.widgets import (
 )
 
 _FOLLOW_CURRENT = object()
-_BACKUP_ROOT = r"C:\jy_keepmoving\研究生\研1上\2026-09-01-ai对话记录器备份"
+_BACKUP_ROOT = os.path.abspath(os.path.expanduser(os.environ.get(
+    "AICHAT_BACKUP_ROOT", "~/Documents/AIChatRecord备份"
+)))
 _UNSAFE_NAME = re.compile(r'[<>:"/\\|?*]')
 _AUTO_BACKUP_REASON = "自动备份"
 _AUTO_BACKUP_SEC = 6 * 60 * 60
@@ -45,6 +47,49 @@ def _fmt_remain(seconds: int) -> str:
 
 
 class OpsMixin:
+    def import_external_conversation(self, folder_id: int):
+        """选择一个本机 Cursor 对话并导入指定文件夹。"""
+        from cursor_import import list_cursor_conversations, load_cursor_conversation
+        from ui.cursor_import_dialog import CursorImportDialog
+
+        source_name = "Cursor"
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            conversations = list_cursor_conversations()
+        except Exception as exc:
+            QMessageBox.critical(self, f"无法读取 {source_name}", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not conversations:
+            QMessageBox.information(
+                self, f"从 {source_name} 导入", f"没有找到本地 {source_name} 对话。"
+            )
+            return
+        dialog = CursorImportDialog(conversations, self, source_name=source_name)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        selected = dialog.selected_conversation()
+        if selected is None:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            info, messages = load_cursor_conversation(selected.composer_id)
+            if not messages:
+                raise RuntimeError("这个对话没有可在本机读取的消息正文。")
+            session_id = self._db.import_external_conversation(
+                "cursor", info, messages, folder_id
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "导入失败", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.reload_sessions(select_id=session_id, select_kind="session")
+        self._status.setText(
+            f"已从 {source_name} 导入：{info.title}（{info.message_count} 轮）"
+        )
+
     def _item_folder_id(self, item):
         """树节点所在的周期文件夹；根目录为 None。"""
         if item is None:
@@ -1065,4 +1110,3 @@ class OpsMixin:
             menu.addAction("删除会话", self.delete_session)
 
         menu.exec(self._tree.mapToGlobal(pos))
-

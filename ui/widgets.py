@@ -101,6 +101,9 @@ MATCH_BTN_W = 46
 MATCH_BTN_H = 22
 MATCH_BTN_MARGIN = 8
 MATCH_BTN_EXTRA = MATCH_BTN_W + MATCH_BTN_MARGIN + 4
+IMPORT_BTN_W = 46
+IMPORT_BTN_GAP = 5
+FOLDER_BTNS_EXTRA = MATCH_BTN_EXTRA + IMPORT_BTN_W + IMPORT_BTN_GAP
 MATCH_CHECK_W = 20
 
 # key -> 显示名、色板、填充、描边
@@ -158,6 +161,16 @@ def match_button_rect(item_rect: QRect) -> QRect:
         item_rect.right() - MATCH_BTN_MARGIN - MATCH_BTN_W,
         item_rect.center().y() - MATCH_BTN_H // 2,
         MATCH_BTN_W,
+        MATCH_BTN_H,
+    )
+
+
+def import_button_rect(item_rect: QRect) -> QRect:
+    match = match_button_rect(item_rect)
+    return QRect(
+        match.left() - IMPORT_BTN_GAP - IMPORT_BTN_W,
+        match.top(),
+        IMPORT_BTN_W,
         MATCH_BTN_H,
     )
 
@@ -489,6 +502,7 @@ class SessionTreeDelegate(QStyledItemDelegate):
         match_fid = getattr(tree, "match_folder_id", None)
         match_sel = getattr(tree, "match_selected", set()) or set()
         hover_fid = getattr(tree, "_match_btn_hover_fid", None)
+        import_hover_fid = getattr(tree, "_import_btn_hover_fid", None)
         matching_session = False
         if kind == "session" and match_fid is not None:
             parent = index.parent()
@@ -571,7 +585,7 @@ class SessionTreeDelegate(QStyledItemDelegate):
 
         right_reserve = 8
         if kind == "folder":
-            right_reserve = MATCH_BTN_EXTRA
+            right_reserve = FOLDER_BTNS_EXTRA
         elif matching_session:
             right_reserve = MATCH_CHECK_W + 10
         text_right = min(opt.rect.right() - right_reserve, bubble.right() - 8)
@@ -647,6 +661,9 @@ class SessionTreeDelegate(QStyledItemDelegate):
             active = match_fid == iid
             btn_hover = hover_fid == iid
             self._paint_match_button(painter, opt.rect, active, btn_hover)
+            self._paint_import_button(
+                painter, opt.rect, import_hover_fid == iid
+            )
 
     def _paint_session_tags(self, painter, col: QRect, tags):
         if not tags:
@@ -709,6 +726,23 @@ class SessionTreeDelegate(QStyledItemDelegate):
         painter.setFont(font)
         painter.setPen(text_color)
         painter.drawText(btn, Qt.AlignCenter, "匹配")
+        painter.restore()
+
+    def _paint_import_button(self, painter, item_rect, hover):
+        btn = import_button_rect(item_rect)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(btn), 8, 8)
+        painter.setBrush(QColor(255, 255, 255, 230 if hover else 175))
+        painter.setPen(QPen(QColor(74, 99, 240, 160) if hover else QColor(170, 180, 210, 200)))
+        painter.drawPath(path)
+        font = QFont(painter.font())
+        font.setPointSize(9)
+        font.setBold(False)
+        painter.setFont(font)
+        painter.setPen(QColor("#4a63f0") if hover else QColor("#5d6684"))
+        painter.drawText(btn, Qt.AlignCenter, "导入")
         painter.restore()
 
     def _paint_match_check(self, painter, item_rect, checked):
@@ -796,7 +830,7 @@ class SessionTreeDelegate(QStyledItemDelegate):
         extra_right = 10
         kind = index.data(ROLE_KIND)
         if kind == "folder":
-            extra_right += MATCH_BTN_EXTRA
+            extra_right += FOLDER_BTNS_EXTRA
         else:
             tree = self.parent()
             match_fid = getattr(tree, "match_folder_id", None)
@@ -829,6 +863,7 @@ class SessionTree(QTreeWidget):
     entry_dropped = Signal(str, int, object, object, str)
     # src_kind, src_id, target_kind | None, target_id | None, above/below/on
     match_clicked = Signal(int, QPoint)  # folder_id, 按钮附近的全局坐标
+    import_clicked = Signal(int)  # folder_id
     match_cancelled = Signal()
     match_session_toggled = Signal(int)  # 匹配模式下点选的会话 id
 
@@ -837,8 +872,10 @@ class SessionTree(QTreeWidget):
         self.match_folder_id = None
         self.match_selected = set()
         self._press_on_match_btn = False
+        self._press_on_import_btn = False
         self._press_on_match_session = None
         self._match_btn_hover_fid = None
+        self._import_btn_hover_fid = None
         self._note_tip_timer = QTimer(self)
         self._note_tip_timer.setSingleShot(True)
         self._note_tip_timer.timeout.connect(self._show_note_tip)
@@ -907,6 +944,10 @@ class SessionTree(QTreeWidget):
             self._hide_note_tip()
             if self._match_btn_hover_fid is not None:
                 self._match_btn_hover_fid = None
+                self.viewport().unsetCursor()
+                self.viewport().update()
+            if self._import_btn_hover_fid is not None:
+                self._import_btn_hover_fid = None
                 self.viewport().unsetCursor()
                 self.viewport().update()
         return super().viewportEvent(event)
@@ -1006,6 +1047,14 @@ class SessionTree(QTreeWidget):
             return item.data(0, ROLE_ID)
         return None
 
+    def _import_button_at(self, pos):
+        item = self.itemAt(pos)
+        if item is None or item.data(0, ROLE_KIND) != "folder":
+            return None
+        if import_button_rect(self.visualItemRect(item)).contains(pos):
+            return item.data(0, ROLE_ID)
+        return None
+
     def _matchable_session_at(self, pos):
         if self.match_folder_id is None:
             return None
@@ -1023,7 +1072,13 @@ class SessionTree(QTreeWidget):
 
     def mousePressEvent(self, event):
         self._press_on_match_session = None
+        self._press_on_import_btn = False
         if event.button() == Qt.LeftButton:
+            import_fid = self._import_button_at(event.position().toPoint())
+            self._press_on_import_btn = import_fid is not None
+            if self._press_on_import_btn:
+                event.accept()
+                return
             fid = self._match_button_at(event.position().toPoint())
             self._press_on_match_btn = fid is not None
             if self._press_on_match_btn:
@@ -1040,10 +1095,14 @@ class SessionTree(QTreeWidget):
 
     def mouseMoveEvent(self, event):
         fid = self._match_button_at(event.position().toPoint())
+        import_fid = self._import_button_at(event.position().toPoint())
         if fid != self._match_btn_hover_fid:
             self._match_btn_hover_fid = fid
             self.viewport().update()
-        if fid is not None:
+        if import_fid != self._import_btn_hover_fid:
+            self._import_btn_hover_fid = import_fid
+            self.viewport().update()
+        if fid is not None or import_fid is not None:
             self.viewport().setCursor(Qt.PointingHandCursor)
         elif self._matchable_session_at(event.position().toPoint()) is not None:
             self.viewport().setCursor(Qt.PointingHandCursor)
@@ -1054,6 +1113,13 @@ class SessionTree(QTreeWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._press_on_import_btn:
+            self._press_on_import_btn = False
+            fid = self._import_button_at(event.position().toPoint())
+            if fid is not None:
+                self.import_clicked.emit(fid)
+            event.accept()
+            return
         if self._press_on_match_btn:
             self._press_on_match_btn = False
             pos = event.position().toPoint()
@@ -1078,6 +1144,10 @@ class SessionTree(QTreeWidget):
         self._set_float_key(None)
         if self._match_btn_hover_fid is not None:
             self._match_btn_hover_fid = None
+            self.viewport().unsetCursor()
+            self.viewport().update()
+        if self._import_btn_hover_fid is not None:
+            self._import_btn_hover_fid = None
             self.viewport().unsetCursor()
             self.viewport().update()
         super().leaveEvent(event)
@@ -1234,4 +1304,3 @@ class MarkdownHelpDialog(QDialog):
         box = QDialogButtonBox(QDialogButtonBox.Ok)
         box.accepted.connect(self.accept)
         lay.addWidget(box)
-
