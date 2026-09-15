@@ -214,6 +214,8 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
         self._migrate_deleted_at()
         self._migrate_match_color()
         self._migrate_updated_at()
+        self._migrate_session_note()
+        self._migrate_session_tags()
         self._ensure_todos_table()
         self._ensure_stash_table()
         self.conn.commit()
@@ -223,6 +225,25 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
             r["name"]
             for r in self.conn.execute(f"PRAGMA table_info({table})")
         ]
+
+    def _migrate_session_note(self):
+        if "note" not in self._table_cols("sessions"):
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN note TEXT NOT NULL DEFAULT ''"
+            )
+
+    def _migrate_session_tags(self):
+        cols = self._table_cols("sessions")
+        if "source" not in cols:
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN"
+                " source TEXT NOT NULL DEFAULT ''"
+            )
+        if "done" not in cols:
+            self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN"
+                " done INTEGER NOT NULL DEFAULT 0"
+            )
 
     def _migrate_match_color(self):
         """会话可按文件夹内分组高亮。"""
@@ -936,7 +957,9 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
         """返回 [{id, name, created_at, folder_id, subject_id, count}]，新建的在前。"""
         sql = """
             SELECT s.id, s.name, s.created_at, s.updated_at, s.folder_id,
-                   s.subject_id, s.sort_order, s.match_color, COUNT(m.id) AS count
+                   s.subject_id, s.sort_order, s.match_color, s.note,
+                   s.source, s.done,
+                   COUNT(m.id) AS count
             FROM sessions s
             LEFT JOIN messages m ON m.session_id = s.id
             WHERE s.deleted_at IS NULL
@@ -952,7 +975,8 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
     def get_session(self, session_id: int):
         row = self.conn.execute(
             "SELECT id, name, created_at, updated_at, folder_id, subject_id,"
-            " deleted_at, match_color FROM sessions WHERE id = ?",
+            " deleted_at, match_color, note, source, done"
+            " FROM sessions WHERE id = ?",
             (session_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -1021,6 +1045,14 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
             folder_id=folder_id,
             subject_id=subject_id if folder_id is None else None,
         )
+        note = (src.get("note") or "").strip()
+        if note:
+            self.set_session_note(new_id, note)
+        source = (src.get("source") or "").strip().lower()
+        if source in ("cursor", "codex"):
+            self.set_session_source(new_id, source, commit=False)
+        if src.get("done"):
+            self.set_session_done(new_id, True, commit=False)
         for m in self.get_messages(session_id):
             content = m["content"]
             if m.get("kind") == "image":
@@ -1068,6 +1100,32 @@ class Database(MindmapMixin, DocumentMixin, TrashMixin):
             (name, _now(), session_id),
         )
         self.conn.commit()
+
+    def set_session_note(self, session_id: int, note: str):
+        self.conn.execute(
+            "UPDATE sessions SET note = ? WHERE id = ?",
+            ((note or "").strip(), session_id),
+        )
+        self.conn.commit()
+
+    def set_session_source(self, session_id: int, source: str, commit: bool = True):
+        key = (source or "").strip().lower()
+        if key not in ("cursor", "codex"):
+            key = ""
+        self.conn.execute(
+            "UPDATE sessions SET source = ? WHERE id = ?",
+            (key, session_id),
+        )
+        if commit:
+            self.conn.commit()
+
+    def set_session_done(self, session_id: int, done: bool, commit: bool = True):
+        self.conn.execute(
+            "UPDATE sessions SET done = ? WHERE id = ?",
+            (1 if done else 0, session_id),
+        )
+        if commit:
+            self.conn.commit()
 
     def auto_name_if_first(self, session_id: int, content: str):
         """会话还是默认名且刚收到第一条记录时，命名为「日期-内容前缀」。"""

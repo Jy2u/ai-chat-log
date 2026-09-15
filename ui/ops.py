@@ -8,7 +8,7 @@ import zipfile
 from datetime import datetime
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMenu, QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMenu, QMessageBox
 
 import render
 from db import DATA_DIR, IMAGES_DIR
@@ -16,8 +16,10 @@ from ui.widgets import (
     MATCH_COLORS,
     ROLE_ID,
     ROLE_KIND,
+    GlassNoteDialog,
     _safe_export_stem,
     _unique_export_stem,
+    norm_session_source,
 )
 
 _FOLLOW_CURRENT = object()
@@ -479,6 +481,35 @@ class OpsMixin:
             return
         self._db.rename_session(sid, name.strip())
         self.reload_sessions(select_id=sid, select_kind="session")
+
+    def edit_session_note(self, session_id=None):
+        sid = self._current_sid if session_id is None else session_id
+        if sid is None:
+            return
+        session = self._db.get_session(sid)
+        if session is None:
+            return
+        dlg = GlassNoteDialog(self, session.get("note") or "")
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self._db.set_session_note(sid, dlg.text())
+        self.reload_sessions(select_id=sid, select_kind="session")
+
+    def set_session_source(self, session_id: int, source: str):
+        session = self._db.get_session(session_id)
+        if session is None:
+            return
+        current = norm_session_source(session.get("source"))
+        next_src = "" if current == source else source
+        self._db.set_session_source(session_id, next_src)
+        self.reload_sessions(select_id=session_id, select_kind="session")
+
+    def toggle_session_done(self, session_id: int):
+        session = self._db.get_session(session_id)
+        if session is None:
+            return
+        self._db.set_session_done(session_id, not bool(session.get("done")))
+        self.reload_sessions(select_id=session_id, select_kind="session")
 
     def delete_session(self):
         sid = self._current_sid
@@ -962,6 +993,31 @@ class OpsMixin:
             session = self._db.get_session(sid)
             self._add_sibling_create_actions(menu, item)
             menu.addAction("重命名", self.rename_session)
+            has_note = bool(((session or {}).get("note") or "").strip())
+            menu.addAction(
+                "编辑备注" if has_note else "添加备注",
+                lambda: self.edit_session_note(sid),
+            )
+            source = norm_session_source((session or {}).get("source"))
+            done = bool((session or {}).get("done"))
+            menu.addSeparator()
+            act_cursor = menu.addAction("【cursor】")
+            act_cursor.setCheckable(True)
+            act_cursor.setChecked(source == "cursor")
+            act_cursor.triggered.connect(
+                lambda: self.set_session_source(sid, "cursor")
+            )
+            act_codex = menu.addAction("【codex】")
+            act_codex.setCheckable(True)
+            act_codex.setChecked(source == "codex")
+            act_codex.triggered.connect(
+                lambda: self.set_session_source(sid, "codex")
+            )
+            act_done = menu.addAction("【已完成】")
+            act_done.setCheckable(True)
+            act_done.setChecked(done)
+            act_done.triggered.connect(lambda: self.toggle_session_done(sid))
+            menu.addSeparator()
 
             menu.addAction(
                 "在此会话下新建思维导图",

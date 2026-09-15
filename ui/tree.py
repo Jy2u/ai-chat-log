@@ -11,10 +11,12 @@ from PySide6.QtWidgets import (
 
 from ui.widgets import (
     ROLE_CREATED,
+    ROLE_DONE,
     ROLE_ID,
     ROLE_KIND,
     ROLE_LABEL,
     ROLE_MATCH_COLOR,
+    ROLE_SOURCE,
     ROLE_UPDATED,
     MATCH_COLORS,
     MatchColorPopup,
@@ -259,6 +261,10 @@ class TreeMixin:
         item.setData(0, ROLE_MATCH_COLOR, s.get("match_color") or "")
         item.setData(0, ROLE_CREATED, s.get("created_at") or "")
         item.setData(0, ROLE_UPDATED, s.get("updated_at") or s.get("created_at") or "")
+        item.setData(0, ROLE_SOURCE, s.get("source") or "")
+        item.setData(0, ROLE_DONE, 1 if s.get("done") else 0)
+        note = (s.get("note") or "").strip()
+        item.setToolTip(0, note)
         item.setFlags(
             Qt.ItemIsEnabled
             | Qt.ItemIsSelectable

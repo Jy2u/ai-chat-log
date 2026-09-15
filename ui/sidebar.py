@@ -47,11 +47,15 @@ from ui.widgets import (
     ChatPage,
     LocalOnlyInterceptor,
     MATCH_BTN_EXTRA,
+    ROLE_DONE,
     ROLE_KIND,
+    ROLE_SOURCE,
+    SESSION_TAG_RESERVE,
     SessionTree,
     SessionTreeDelegate,
     SubjectTree,
     _enable_tree_wrap,
+    session_tag_keys,
 )
 
 SIDE_RAIL_W = 26
@@ -126,6 +130,8 @@ class SidebarMixin:
 
     def _build_toolbar(self):
         bar = QToolBar()
+        bar.setObjectName("mainToolBar")
+        bar.setAttribute(Qt.WA_StyledBackground, True)
         bar.setMovable(False)
         bar.setToolButtonStyle(Qt.ToolButtonTextOnly)
         bar.setIconSize(QSize(18, 18))
@@ -150,6 +156,7 @@ class SidebarMixin:
         bar.addWidget(spacer)
 
         self._search = QLineEdit()
+        self._search.setObjectName("mainSearch")
         self._search.setPlaceholderText("搜索全部记录，回车确认")
         self._search.setClearButtonEnabled(True)
         self._search.setFixedWidth(240)
@@ -285,11 +292,11 @@ class SidebarMixin:
         self._web = QWebEngineView()
         self._page = ChatPage(self._web)
         self._page.app_action.connect(self._handle_app_action)
-        self._page.setBackgroundColor(QColor("#edeffb"))
+        self._page.setBackgroundColor(QColor("#e6ebf8"))
         self._interceptor = LocalOnlyInterceptor()
         self._page.profile().setUrlRequestInterceptor(self._interceptor)
         self._web.setPage(self._page)
-        self._web.setStyleSheet("background: #edeffb;")
+        self._web.setStyleSheet("background: transparent;")
 
         body_host = QWidget()
         body_host.setObjectName("bodyHost")
@@ -321,6 +328,10 @@ class SidebarMixin:
         self._side_expand_timer.setSingleShot(True)
         self._side_expand_timer.setInterval(SIDE_HOVER_MS)
         self._side_expand_timer.timeout.connect(self._try_expand_sidebar)
+        self._side_collapse_timer = QTimer(self)
+        self._side_collapse_timer.setSingleShot(True)
+        self._side_collapse_timer.setInterval(160)
+        self._side_collapse_timer.timeout.connect(self._try_collapse_sidebar)
 
         todo_divider = QFrame()
         todo_divider.setObjectName("todoDivider")
@@ -387,6 +398,10 @@ class SidebarMixin:
                 widest = w
             if item.data(0, ROLE_KIND) == "folder":
                 widest = max(widest, w + MATCH_BTN_EXTRA)
+            elif item.data(0, ROLE_KIND) == "session" and session_tag_keys(
+                item.data(0, ROLE_SOURCE), item.data(0, ROLE_DONE)
+            ):
+                widest = max(widest, w + SESSION_TAG_RESERVE)
             for i in range(item.childCount()):
                 walk(item.child(i), depth + 1)
 
@@ -578,26 +593,48 @@ class SidebarMixin:
         if self.isVisible() and not side.isVisible():
             side.show()
 
+    def _cursor_over_sidebar(self) -> bool:
+        side = getattr(self, "_side", None)
+        if side is None:
+            return False
+        return side.rect().contains(side.mapFromGlobal(QCursor.pos()))
+
     def _on_sidebar_enter(self):
         self._side_hovering = True
+        self._side_collapse_timer.stop()
         if not self._sidebar_collapsed:
             return
         self._side_expand_timer.stop()
         self._expand_sidebar_hover()
 
     def _on_sidebar_leave(self):
+        if self._cursor_over_sidebar():
+            self._side_hovering = True
+            return
         self._side_hovering = False
         self._side_expand_timer.stop()
         if QApplication.activePopupWidget() is not None:
             return
         if QApplication.mouseButtons() != Qt.NoButton:
             return
-        self._collapse_sidebar_hover()
+        self._side_collapse_timer.start()
 
     def _try_expand_sidebar(self):
         if not self._side_hovering or not self._side.underMouse():
             return
         self._expand_sidebar_hover()
+
+    def _try_collapse_sidebar(self):
+        if self._cursor_over_sidebar() or (
+            getattr(self, "_side", None) is not None and self._side.underMouse()
+        ):
+            self._side_hovering = True
+            return
+        if QApplication.activePopupWidget() is not None:
+            return
+        if QApplication.mouseButtons() != Qt.NoButton:
+            return
+        self._collapse_sidebar_hover()
 
     def _expand_sidebar_hover(self):
         target = self._sidebar_content_width()
@@ -609,6 +646,7 @@ class SidebarMixin:
         if QApplication.activePopupWidget() is not None:
             return
         self._side_expand_timer.stop()
+        self._side_collapse_timer.stop()
         self._sidebar_collapsed = True
         self._animate_sidebar(SIDE_RAIL_W)
 
