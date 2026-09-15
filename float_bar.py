@@ -49,13 +49,13 @@ class FloatBar(QWidget):
         card.setObjectName("card")
         lay = QHBoxLayout(self)
         # 周围留白给投影用
-        lay.setContentsMargins(16, 12, 16, 24)
+        lay.setContentsMargins(20, 14, 20, 28)
         lay.addWidget(card)
 
         shadow = QGraphicsDropShadowEffect(card)
-        shadow.setBlurRadius(30)
-        shadow.setOffset(0, 8)
-        shadow.setColor(QColor(15, 20, 45, 110))
+        shadow.setBlurRadius(40)
+        shadow.setOffset(0, 12)
+        shadow.setColor(QColor(15, 20, 45, 150))
         card.setGraphicsEffect(shadow)
 
         self._thumb = QLabel(card)
@@ -93,9 +93,13 @@ class FloatBar(QWidget):
         self.setStyleSheet(
             """
             #card {
-                background: rgba(30, 34, 50, 0.8);
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(48, 54, 76, 0.96),
+                    stop:1 rgba(28, 32, 48, 0.94));
                 border-radius: 16px;
-                border: 1px solid rgba(255, 255, 255, 0.18);
+                border: 1px solid rgba(255, 255, 255, 0.22);
+                border-top: 1px solid rgba(255, 255, 255, 0.38);
+                border-bottom: 1px solid rgba(8, 10, 22, 0.55);
             }
             #preview {
                 color: #e2e7f5;
@@ -114,18 +118,34 @@ class FloatBar(QWidget):
             }
             #btnQ {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(118, 142, 255, 0.95),
-                    stop:1 rgba(82, 108, 247, 0.95));
-                border: 1px solid rgba(255, 255, 255, 0.25);
+                    stop:0 #7d99ff, stop:0.5 #5f7cf9, stop:1 #4a63f0);
+                border: 1px solid rgba(255, 255, 255, 0.38);
+                border-top: 1px solid rgba(255, 255, 255, 0.62);
+                border-bottom: 1px solid rgba(48, 66, 168, 0.7);
             }
-            #btnQ:hover { background: #7186ff; }
+            #btnQ:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #8ea6ff, stop:0.5 #6e89fb, stop:1 #5670f3);
+            }
+            #btnQ:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #5670f3, stop:1 #4459de);
+            }
             #btnA {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(30, 192, 152, 0.95),
-                    stop:1 rgba(15, 157, 122, 0.95));
-                border: 1px solid rgba(255, 255, 255, 0.25);
+                    stop:0 #2ed3ab, stop:0.5 #16b58a, stop:1 #0e9a76);
+                border: 1px solid rgba(255, 255, 255, 0.32);
+                border-top: 1px solid rgba(255, 255, 255, 0.55);
+                border-bottom: 1px solid rgba(8, 96, 74, 0.65);
             }
-            #btnA:hover { background: #1cc79b; }
+            #btnA:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3fddb6, stop:0.5 #1cc79b, stop:1 #12a882);
+            }
+            #btnA:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #12a882, stop:1 #0c8a68);
+            }
             #btnX {
                 background: transparent;
                 color: #9aa2b5;

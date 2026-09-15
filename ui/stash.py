@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ui.style import apply_glass_shadow
+
 STASH_KINDS = (
     ("prompt", "提示词"),
     ("key", "密钥"),
@@ -202,6 +204,7 @@ class StashPanel(QFrame):
         nav = QFrame()
         nav.setObjectName("stashNav")
         nav.setAttribute(Qt.WA_StyledBackground, True)
+        apply_glass_shadow(nav)
         nav.setFixedSize(132, 132)
         self._kind_group = QButtonGroup(self)
         self._kind_group.setExclusive(True)
@@ -226,6 +229,7 @@ class StashPanel(QFrame):
         glass = QFrame()
         glass.setObjectName("todoGlass")
         glass.setAttribute(Qt.WA_StyledBackground, True)
+        apply_glass_shadow(glass)
 
         self._input = QLineEdit()
         self._input.setObjectName("todoInput")
