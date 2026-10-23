@@ -325,7 +325,7 @@ class TreeMixin:
             if item.childCount():
                 item.setExpanded(True)
 
-    def reload_sessions(self, select_id=None, select_kind=None):
+    def reload_sessions(self, select_id=None, select_kind=None, reload_view=True):
         if select_kind is None:
             select_kind = self._current_kind
         if select_id is None:
@@ -468,7 +468,7 @@ class TreeMixin:
 
         if self._current_sid is not None:
             self._settings.setValue("current_session_id", self._current_sid)
-        if not self._search_mode:
+        if reload_view and not self._search_mode:
             self._reload_main_view()
         self._fit_sidebars_to_oneline()
 
@@ -773,6 +773,9 @@ class TreeMixin:
 
         if place == "on" and target_kind == "folder":
             self._move_entry_to(src_kind, src_id, folder_id=target_id)
+            if src_kind == "session":
+                self.reload_sessions(select_id=src_id, select_kind=src_kind)
+                return
             keys = [
                 (x["kind"], x["id"])
                 for x in self._db.list_tree_items(
@@ -860,4 +863,3 @@ class TreeMixin:
             if top.data(0, ROLE_KIND) == "folder" and top.isExpanded():
                 ids.append(str(top.data(0, ROLE_ID)))
         self._settings.setValue(self._expanded_folders_key(), ids)
-

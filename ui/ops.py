@@ -4,7 +4,6 @@ import os
 import re
 import shutil
 import time
-import zipfile
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer
@@ -24,7 +23,8 @@ from ui.widgets import (
 
 _FOLLOW_CURRENT = object()
 _BACKUP_ROOT = os.path.abspath(os.path.expanduser(os.environ.get(
-    "AICHAT_BACKUP_ROOT", "~/Documents/AIChatRecord备份"
+    "AICHAT_BACKUP_ROOT",
+    os.path.join("~", "AIChatLogBackups"),
 )))
 _UNSAFE_NAME = re.compile(r'[<>:"/\\|?*]')
 _AUTO_BACKUP_REASON = "自动备份"
@@ -33,6 +33,34 @@ _AUTO_BACKUP_MS = _AUTO_BACKUP_SEC * 1000
 _AUTO_BACKUP_RETRY_MS = 30 * 60 * 1000
 _LAST_AUTO_BACKUP_KEY = "last_auto_backup_at"
 _AUTO_BACKUP_START_KEY = "auto_backup_start_at"
+
+
+def summarize_imports(source_name: str, results: list, failure_count: int = 0, turns=None) -> str:
+    """把一批导入结果收成状态栏上的一句话。"""
+    if len(results) == 1 and not failure_count:
+        result = results[0]
+        if result.merged and result.added:
+            return f"已把 {result.added} 条新消息补进「{result.name}」"
+        if result.merged:
+            return f"「{result.name}」里已经有这些内容，没有新消息"
+        if turns is not None:
+            return f"已从 {source_name} 导入：{result.name}（{turns} 轮）"
+        return f"已从 {source_name} 导入：{result.name}"
+    created = sum(1 for result in results if not result.merged)
+    updated = [result for result in results if result.merged and result.added]
+    unchanged = sum(1 for result in results if result.merged and not result.added)
+    bits = []
+    if created:
+        bits.append(f"新建 {created} 个")
+    if updated:
+        bits.append(f"{len(updated)} 个补进 {sum(result.added for result in updated)} 条")
+    if unchanged:
+        bits.append(f"{unchanged} 个没有新消息")
+    if failure_count:
+        bits.append(f"{failure_count} 个失败")
+    if not bits:
+        return f"没有导入 {source_name} 对话"
+    return f"已处理 {len(results)} 个 {source_name} 对话：" + "，".join(bits)
 
 
 def _fmt_remain(seconds: int) -> str:
@@ -47,48 +75,136 @@ def _fmt_remain(seconds: int) -> str:
 
 
 class OpsMixin:
+    def _note_activity(self, action: str, detail: str = ""):
+        note = getattr(self._db, "record_activity", None)
+        if note is not None:
+            note(action, detail)
+
     def import_external_conversation(self, folder_id: int):
-        """选择一个本机 Cursor 对话并导入指定文件夹。"""
+        """选择一个或多个本机 Cursor 对话或 Codex 快照会话并导入。"""
         from cursor_import import list_cursor_conversations, load_cursor_conversation
+        from codex_import import (
+            codex_snapshot_host,
+            list_codex_conversations,
+            load_codex_conversation,
+        )
         from ui.cursor_import_dialog import CursorImportDialog
 
-        source_name = "Cursor"
+        cursor_error = ""
         try:
             QApplication.setOverrideCursor(Qt.WaitCursor)
             conversations = list_cursor_conversations()
         except Exception as exc:
-            QMessageBox.critical(self, f"无法读取 {source_name}", str(exc))
-            return
+            conversations = []
+            cursor_error = f"无法读取本机 Cursor 缓存：{exc}。你仍可切换到 Codex 导入。"
         finally:
             QApplication.restoreOverrideCursor()
-        if not conversations:
-            QMessageBox.information(
-                self, f"从 {source_name} 导入", f"没有找到本地 {source_name} 对话。"
+
+        if not conversations and not cursor_error:
+            cursor_error = "没有找到本机 Cursor 对话。你仍可切换到 Codex 导入。"
+
+        def load_source(source, parent, force_reload=False):
+            if source == "cursor":
+                return conversations, None, cursor_error
+            saved = str(self._settings.value("codex_import_snapshot", "") or "")
+            known = r"E:\CodexExports\codex-export-latest.tar.gz"
+            snapshot = saved if os.path.isfile(saved) else known if os.path.isfile(known) else ""
+            if force_reload or not snapshot:
+                start = snapshot or (
+                    r"E:\CodexExports" if os.path.isdir(r"E:\CodexExports") else os.path.expanduser("~")
+                )
+                snapshot, _ = QFileDialog.getOpenFileName(
+                    parent,
+                    "选择 Codex 导出压缩包",
+                    start,
+                    "Codex 快照 (*.tar.gz *.tgz);;所有文件 (*)",
+                )
+                if not snapshot:
+                    return None
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                codex_conversations = list_codex_conversations(snapshot)
+            finally:
+                QApplication.restoreOverrideCursor()
+            if not codex_conversations:
+                raise RuntimeError("这个快照里没有找到可导入的 Codex 对话。")
+            self._settings.setValue("codex_import_snapshot", snapshot)
+            host = codex_snapshot_host(snapshot)
+            suffix_note = (
+                f"新建的会话名末尾会加上 -【{host}】。"
+                if host else ""
             )
-            return
-        dialog = CursorImportDialog(conversations, self, source_name=source_name)
+            hint = (
+                f"已读取本地 Codex 快照：{snapshot}。"
+                "按住 Ctrl 或 Shift 可多选，然后一次导入到当前文件夹，不会修改压缩包。"
+                "若夹内已有内容大量重合的对话，只会补上新消息，并保留你改过的标题。"
+                + suffix_note
+            )
+            return codex_conversations, snapshot, hint
+
+        dialog = CursorImportDialog(
+            conversations,
+            self,
+            source_name="Cursor",
+            source_loader=load_source,
+            initial_hint=cursor_error,
+        )
         if dialog.exec() != QDialog.Accepted:
             return
-        selected = dialog.selected_conversation()
-        if selected is None:
+        selected = dialog.selected_conversations()
+        if not selected:
             return
+        source = dialog.selected_source()
+        source_name = source.title()
+        results = []
+        failures = []
+        turns = None
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            info, messages = load_cursor_conversation(selected.composer_id)
-            if not messages:
-                raise RuntimeError("这个对话没有可在本机读取的消息正文。")
-            session_id = self._db.import_external_conversation(
-                "cursor", info, messages, folder_id
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "导入失败", str(exc))
-            return
+            for chosen in selected:
+                title = getattr(chosen, "title", None) or "未命名对话"
+                try:
+                    if source == "codex":
+                        info, messages = load_codex_conversation(
+                            dialog.source_context(), chosen
+                        )
+                    else:
+                        info, messages = load_cursor_conversation(chosen.composer_id)
+                    if not messages:
+                        raise RuntimeError("没有可在本机读取的消息正文")
+                    host = ""
+                    if source == "codex":
+                        host = codex_snapshot_host(dialog.source_context() or "")
+                    result = self._db.import_external_conversation(
+                        source, info, messages, folder_id, host=host
+                    )
+                except Exception as exc:
+                    failures.append(f"{title}：{exc}")
+                    continue
+                results.append(result)
+                turns = info.message_count
         finally:
             QApplication.restoreOverrideCursor()
-        self.reload_sessions(select_id=session_id, select_kind="session")
-        self._status.setText(
-            f"已从 {source_name} 导入：{info.title}（{info.message_count} 轮）"
-        )
+        if results:
+            self.reload_sessions(select_id=results[0].session_id, select_kind="session")
+            self._status.setText(
+                summarize_imports(
+                    source_name, results, len(failures),
+                    turns if len(results) == 1 else None,
+                )
+            )
+        if failures:
+            detail = "\n".join(failures[:12])
+            if len(failures) > 12:
+                detail += f"\n…还有 {len(failures) - 12} 个"
+            box = QMessageBox.warning if results else QMessageBox.critical
+            box(
+                self,
+                "部分对话导入失败" if results else "导入失败",
+                detail,
+            )
+            if not results:
+                self._status.setText(f"导入失败：{len(failures)} 个对话都没有写入")
 
     def _item_folder_id(self, item):
         """树节点所在的周期文件夹；根目录为 None。"""
@@ -608,9 +724,20 @@ class OpsMixin:
         )
         if not path:
             return
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(render.export_markdown(session, messages))
-        self._status.setText(f"已导出到 {path}")
+        n_img = sum(1 for msg in messages if msg.get("kind") == "image")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(render.export_markdown(
+                    session, messages, embed_images=True
+                ))
+        except OSError as exc:
+            QMessageBox.warning(self, "导出失败", str(exc))
+            return
+        self._note_activity("导出会话", f"「{session['name']}」到 {path}")
+        self._status.setText(
+            f"已导出到 {path}"
+            + (f"（已内嵌 {n_img} 张图片）" if n_img else "")
+        )
 
     def _matched_sessions(self, session: dict) -> list:
         """同一课题、同一文件夹、同一匹配色的全部对话。"""
@@ -657,33 +784,22 @@ class OpsMixin:
         n_img = 0
         try:
             os.makedirs(dest, exist_ok=True)
-            img_dir = os.path.join(dest, "images")
             for s in peers:
                 stem = _unique_export_stem(
                     _safe_export_stem(s["name"]) or "会话", used
                 )
                 messages = self._db.get_messages(s["id"])
-                body = render.export_markdown(s, messages, image_rel="images")
+                body = render.export_markdown(s, messages, embed_images=True)
                 with open(
                     os.path.join(dest, stem + ".md"), "w", encoding="utf-8"
                 ) as f:
                     f.write(body)
-                for msg in messages:
-                    if msg.get("kind") != "image":
-                        continue
-                    name = msg.get("content") or ""
-                    src = os.path.join(IMAGES_DIR, name)
-                    if not name or not os.path.isfile(src):
-                        continue
-                    os.makedirs(img_dir, exist_ok=True)
-                    dst = os.path.join(img_dir, os.path.basename(name))
-                    if not os.path.isfile(dst):
-                        shutil.copy2(src, dst)
-                        n_img += 1
+                n_img += sum(1 for msg in messages if msg.get("kind") == "image")
         except OSError as e:
             QMessageBox.warning(self, "导出失败", str(e))
             self._status.setText(f"导出失败：{e}")
             return
+        self._note_activity("导出匹配对话", f"{len(peers)} 个到 {dest}")
         self._status.setText(
             f"已导出 {len(peers)} 个匹配对话到 {dest}"
             + (f"（{n_img} 张图片）" if n_img else "")
@@ -701,6 +817,7 @@ class OpsMixin:
             return
         with open(path, "w", encoding="utf-8") as f:
             f.write(doc.get("content") or "")
+        self._note_activity("导出文档", f"「{doc['name']}」到 {path}")
         self._status.setText(f"已导出到 {path}")
 
     def export_folder(self, folder_id: int):
@@ -709,14 +826,19 @@ class OpsMixin:
         if folder is None:
             return
         safe_root = _safe_export_stem(folder["name"]) or "文件夹"
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "下载整个文件夹",
-            safe_root + ".zip",
-            "ZIP (*.zip)",
+        last = self._settings.value("last_export_dir", "")
+        parent = QFileDialog.getExistingDirectory(
+            self, "选择文件夹导出位置", last
         )
-        if not path:
+        if not parent:
             return
+        self._settings.setValue("last_export_dir", parent)
+        dest = self._unique_export_dir(parent, safe_root)
+        partial = dest + ".partial"
+        partial_n = 2
+        while os.path.exists(partial):
+            partial = dest + f".partial-{partial_n}"
+            partial_n += 1
         sessions = [
             s for s in self._db.list_sessions() if s["folder_id"] == folder_id
         ]
@@ -737,78 +859,84 @@ class OpsMixin:
         used_chat, used_map, used_doc = set(), set(), set()
         n_chat, n_map, n_doc, n_img = 0, 0, 0, 0
         try:
-            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
-                if not sessions and not maps and not docs:
-                    zf.writestr(
-                        f"{safe_root}/说明.txt",
-                        "这个文件夹是空的。\n",
+            os.makedirs(partial)
+            if not sessions and not maps and not docs:
+                with open(
+                    os.path.join(partial, "说明.txt"), "w", encoding="utf-8"
+                ) as handle:
+                    handle.write("这个文件夹是空的。\n")
+            if sessions:
+                os.makedirs(os.path.join(partial, "对话"))
+            for s in sessions:
+                stem = _unique_export_stem(
+                    _safe_export_stem(s["name"]) or "会话", used_chat
+                )
+                messages = self._db.get_messages(s["id"])
+                body = render.export_markdown(
+                    s, messages, embed_images=True
+                )
+                with open(
+                    os.path.join(partial, "对话", stem + ".md"),
+                    "w",
+                    encoding="utf-8",
+                ) as handle:
+                    handle.write(body)
+                n_chat += 1
+                n_img += sum(
+                    1 for msg in messages if msg.get("kind") == "image"
+                )
+            if maps:
+                os.makedirs(os.path.join(partial, "思维导图"))
+            for src_kind, mmap in maps:
+                base = _safe_export_stem(mmap["name"]) or "思维导图"
+                if src_kind == "session":
+                    sess = self._db.get_session(mmap["session_id"])
+                    prefix = (
+                        _safe_export_stem(sess["name"]) if sess else "会话"
                     )
-                for s in sessions:
-                    stem = _unique_export_stem(
-                        _safe_export_stem(s["name"]) or "会话", used_chat
+                    base = f"{prefix}-{base}"
+                stem = _unique_export_stem(base, used_map)
+                body = render.export_mindmap_markdown(
+                    mmap,
+                    self._db.get_mindmap_nodes(mmap["id"]),
+                    self._db.list_mindmap_edges(mmap["id"]),
+                )
+                with open(
+                    os.path.join(partial, "思维导图", stem + ".md"),
+                    "w",
+                    encoding="utf-8",
+                ) as handle:
+                    handle.write(body)
+                n_map += 1
+            if docs:
+                os.makedirs(os.path.join(partial, "文档"))
+            for src_kind, doc in docs:
+                full = self._db.get_document(doc["id"]) or doc
+                base = _safe_export_stem(full["name"]) or "文档"
+                if src_kind == "session":
+                    sess = self._db.get_session(full.get("session_id"))
+                    prefix = (
+                        _safe_export_stem(sess["name"]) if sess else "会话"
                     )
-                    messages = self._db.get_messages(s["id"])
-                    body = render.export_markdown(
-                        s, messages, image_rel="../images"
-                    )
-                    zf.writestr(
-                        f"{safe_root}/对话/{stem}.md",
-                        body.encode("utf-8"),
-                    )
-                    n_chat += 1
-                    for msg in messages:
-                        if msg.get("kind") != "image":
-                            continue
-                        name = msg.get("content") or ""
-                        src = os.path.join(IMAGES_DIR, name)
-                        if not name or not os.path.isfile(src):
-                            continue
-                        arc = f"{safe_root}/images/{os.path.basename(name)}"
-                        try:
-                            zf.getinfo(arc)
-                        except KeyError:
-                            zf.write(src, arc)
-                            n_img += 1
-                for src_kind, mmap in maps:
-                    base = _safe_export_stem(mmap["name"]) or "思维导图"
-                    if src_kind == "session":
-                        sess = self._db.get_session(mmap["session_id"])
-                        prefix = (
-                            _safe_export_stem(sess["name"]) if sess else "会话"
-                        )
-                        base = f"{prefix}-{base}"
-                    stem = _unique_export_stem(base, used_map)
-                    body = render.export_mindmap_markdown(
-                        mmap,
-                        self._db.get_mindmap_nodes(mmap["id"]),
-                        self._db.list_mindmap_edges(mmap["id"]),
-                    )
-                    zf.writestr(
-                        f"{safe_root}/思维导图/{stem}.md",
-                        body.encode("utf-8"),
-                    )
-                    n_map += 1
-                for src_kind, doc in docs:
-                    full = self._db.get_document(doc["id"]) or doc
-                    base = _safe_export_stem(full["name"]) or "文档"
-                    if src_kind == "session":
-                        sess = self._db.get_session(full.get("session_id"))
-                        prefix = (
-                            _safe_export_stem(sess["name"]) if sess else "会话"
-                        )
-                        base = f"{prefix}-{base}"
-                    stem = _unique_export_stem(base, used_doc)
-                    zf.writestr(
-                        f"{safe_root}/文档/{stem}.md",
-                        (full.get("content") or "").encode("utf-8"),
-                    )
-                    n_doc += 1
+                    base = f"{prefix}-{base}"
+                stem = _unique_export_stem(base, used_doc)
+                with open(
+                    os.path.join(partial, "文档", stem + ".md"),
+                    "w",
+                    encoding="utf-8",
+                ) as handle:
+                    handle.write(full.get("content") or "")
+                n_doc += 1
+            os.replace(partial, dest)
         except OSError as e:
-            QMessageBox.warning(self, "下载失败", str(e))
-            self._status.setText(f"下载失败：{e}")
+            if os.path.isdir(partial):
+                shutil.rmtree(partial, ignore_errors=True)
+            QMessageBox.warning(self, "导出失败", str(e))
+            self._status.setText(f"导出失败：{e}")
             return
+        self._note_activity("导出文件夹", f"「{folder['name']}」到 {dest}")
         self._status.setText(
-            f"已下载到 {path}（{n_chat} 个对话 · {n_map} 张导图"
+            f"已导出文件夹到 {dest}（{n_chat} 个对话 · {n_map} 张导图"
             f" · {n_doc} 篇文档 · {n_img} 张图片）"
         )
 
@@ -820,6 +948,7 @@ class OpsMixin:
 
     def _setup_auto_backup(self):
         self._next_auto_backup_at = None
+        self._last_auto_backup_error = ""
         self._auto_backup_timer = QTimer(self)
         self._auto_backup_timer.setSingleShot(True)
         self._auto_backup_timer.timeout.connect(self._auto_backup)
@@ -870,10 +999,23 @@ class OpsMixin:
         remain_part = (
             "正在自动备份" if remain <= 0 else f"下次还有 {_fmt_remain(remain)}"
         )
-        label.setText(f"{last_part}  ·  {remain_part}")
+        error = getattr(self, "_last_auto_backup_error", "")
+        if error:
+            label.setText(f"{last_part}  ·  最近一次失败，{remain_part}")
+            label.setToolTip(error)
+        else:
+            label.setText(f"{last_part}  ·  {remain_part}")
+            label.setToolTip("")
 
     def _auto_backup(self):
-        ok = self._run_backup(_AUTO_BACKUP_REASON, silent=True)
+        try:
+            ok = self._run_backup(_AUTO_BACKUP_REASON, silent=True)
+        except Exception as e:
+            # 自动备份由单次 QTimer 驱动；异常若逃出槽函数，后续计时就会
+            # 永久中断。这里作为最后一道边界，保证任何失败都会进入重试。
+            self._last_auto_backup_error = str(e)
+            self._status.setText(f"自动备份失败：{e}")
+            ok = False
         if ok:
             now = time.time()
             self._settings.setValue(_LAST_AUTO_BACKUP_KEY, now)
@@ -899,7 +1041,11 @@ class OpsMixin:
             n += 1
 
         app_dir = os.path.abspath(os.path.dirname(DATA_DIR))
-        skip_dirs = {"__pycache__", ".git", ".cursor", ".idea", ".vscode"}
+        skip_dirs = {
+            "__pycache__", ".git", ".cursor", ".idea", ".vscode",
+            "our-get-cursor-chat", "out-get-codex-from-cursor-chat",
+            "outside-sources", "exported-chats", "exports", "backups",
+        }
         skip_db = {"chatlog.db", "chatlog.db-wal", "chatlog.db-shm"}
 
         def ignore(directory, names):
@@ -907,20 +1053,49 @@ class OpsMixin:
             for name in names:
                 if name in skip_dirs or name in skip_db or name.endswith(".pyc"):
                     skipped.append(name)
+                elif (
+                    os.path.normcase(os.path.abspath(directory))
+                    == os.path.normcase(os.path.abspath(DATA_DIR))
+                    and name in {"view.html", "last_error.txt"}
+                ):
+                    skipped.append(name)
             return skipped
 
-        dest_db = os.path.join(dest, "data", "chatlog.db")
+        # 先写到临时目录，全部成功后再原子改名。资源管理器不会把半份备份
+        # 当成成功结果，失败清理也不会碰到任何既有完整备份。
+        partial = dest + ".partial"
+        partial_n = 2
+        while os.path.exists(partial):
+            partial = dest + f".partial-{partial_n}"
+            partial_n += 1
+        dest_db = os.path.join(partial, "data", "chatlog.db")
         dest_images = os.path.join(dest, "data", "images")
         try:
             os.makedirs(_BACKUP_ROOT, exist_ok=True)
-            shutil.copytree(app_dir, dest, ignore=ignore)
+            shutil.copytree(app_dir, partial, ignore=ignore)
             self._db.backup_to(dest_db)
-        except OSError as e:
+            # copytree 会把源项目根目录的旧修改时间复制到备份目录，导致
+            # Explorer 看起来像“几天没备份”。发布前恢复为本次备份时间。
+            os.utime(partial, None)
+            os.replace(partial, dest)
+        except Exception as e:
+            root = os.path.normcase(os.path.abspath(_BACKUP_ROOT))
+            target = os.path.normcase(os.path.abspath(partial))
+            try:
+                inside_root = os.path.commonpath((root, target)) == root
+            except ValueError:
+                inside_root = False
+            if inside_root and target != root and os.path.isdir(partial):
+                shutil.rmtree(partial, ignore_errors=True)
+            self._last_auto_backup_error = str(e)
             if not silent:
                 QMessageBox.warning(self, "备份失败", str(e))
+            self._note_activity("备份失败", f"{reason}：{e}")
             self._status.setText(f"备份失败：{e}")
+            self._refresh_auto_backup_hint()
             return False
 
+        self._last_auto_backup_error = ""
         n_img = 0
         if os.path.isdir(dest_images):
             n_img = sum(
@@ -928,9 +1103,11 @@ class OpsMixin:
                 for name in os.listdir(dest_images)
                 if os.path.isfile(os.path.join(dest_images, name))
             )
+        self._note_activity("备份整个软件", dest)
         self._status.setText(
             f"已备份到 {dest}（程序文件 + 数据库 + {n_img} 张图片）"
         )
+        self._refresh_auto_backup_hint()
         return True
 
     def _tree_menu(self, pos):
@@ -967,7 +1144,7 @@ class OpsMixin:
                 "在此文件夹新建文档",
                 lambda: self.new_document(folder_id=fid, session_id=None),
             )
-            menu.addAction("下载整个文件夹", lambda: self.export_folder(fid))
+            menu.addAction("导出整个文件夹", lambda: self.export_folder(fid))
             menu.addAction("重命名文件夹", lambda: self.rename_folder(fid))
             move_subj = menu.addMenu("移动到课题")
             self._fill_subject_dest_menu(

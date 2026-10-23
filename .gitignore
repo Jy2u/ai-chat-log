@@ -49,6 +49,19 @@ venv/
 # 自己看的推送备忘，不进仓库
 github.md
 
+# 本地临时目录、私有配置及导出快照
+.test-tmp/
+/git
+.codex/
+.agents/
+.aws/
+*.pem
+*.key
+*.p12
+*.pfx
+*.tar.gz
+*.tgz
+
 # 系统杂项
 Thumbs.db
 Desktop.ini

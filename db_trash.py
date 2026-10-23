@@ -35,6 +35,10 @@ class TrashMixin:
         self._stamp_deleted("sessions", "subject_id = ?", (subject_id,))
         self._stamp_deleted("mindmaps", "subject_id = ?", (subject_id,))
         self._stamp_deleted("documents", "subject_id = ?", (subject_id,))
+        self._activity(
+            "移入回收站",
+            f"课题「{self._named(self.get_subject, subject_id, '课题')}」",
+        )
         self.conn.commit()
         return True
 
@@ -53,20 +57,29 @@ class TrashMixin:
             " (SELECT id FROM sessions WHERE folder_id = ?)",
             (folder_id, folder_id),
         )
+        self._activity(
+            "移入回收站",
+            f"文件夹「{self._named(self.get_folder, folder_id, '文件夹')}」",
+        )
         self.conn.commit()
 
     def trash_session(self, session_id: int):
         self._stamp_deleted("sessions", "id = ?", (session_id,))
         self._stamp_deleted("mindmaps", "session_id = ?", (session_id,))
         self._stamp_deleted("documents", "session_id = ?", (session_id,))
+        self._activity("移入回收站", f"会话「{self._session_name(session_id)}」")
         self.conn.commit()
 
     def trash_mindmap(self, mindmap_id: int):
+        name = self._named(self.get_mindmap, mindmap_id, "思维导图")
         self._stamp_deleted("mindmaps", "id = ?", (mindmap_id,))
+        self._activity("移入回收站", f"思维导图「{name}」")
         self.conn.commit()
 
     def trash_document(self, document_id: int):
+        name = self._named(self.get_document, document_id, "文档")
         self._stamp_deleted("documents", "id = ?", (document_id,))
+        self._activity("移入回收站", f"文档「{name}」")
         self.conn.commit()
 
     def restore_subject(self, subject_id: int) -> bool:
@@ -93,6 +106,8 @@ class TrashMixin:
             "UPDATE documents SET deleted_at = NULL WHERE subject_id = ?",
             (subject_id,),
         )
+        self._order_subject_sessions(subject_id)
+        self._activity("恢复", f"课题「{row['name']}」")
         self.conn.commit()
         return True
 
@@ -126,6 +141,8 @@ class TrashMixin:
             """,
             (folder_id, folder_id),
         )
+        self._rewrite_container_session_order(folder.get("subject_id"), folder_id)
+        self._activity("恢复", f"文件夹「{folder['name']}」")
         self.conn.commit()
 
     def restore_session(self, session_id: int) -> bool:
@@ -134,6 +151,12 @@ class TrashMixin:
             return False
         folder_id = sess.get("folder_id")
         self._restore_subject_row(sess.get("subject_id"))
+        order = self._place_session_by_created(
+            sess.get("subject_id"),
+            folder_id,
+            sess.get("created_at") or "",
+            exclude_id=session_id,
+        )
         if folder_id is not None:
             folder = self.get_folder(folder_id)
             if folder and folder.get("deleted_at"):
@@ -142,8 +165,8 @@ class TrashMixin:
                     (folder_id,),
                 )
         self.conn.execute(
-            "UPDATE sessions SET deleted_at = NULL WHERE id = ?",
-            (session_id,),
+            "UPDATE sessions SET deleted_at = NULL, sort_order = ? WHERE id = ?",
+            (order, session_id),
         )
         self.conn.execute(
             "UPDATE mindmaps SET deleted_at = NULL WHERE session_id = ?",
@@ -153,6 +176,7 @@ class TrashMixin:
             "UPDATE documents SET deleted_at = NULL WHERE session_id = ?",
             (session_id,),
         )
+        self._activity("恢复", f"会话「{sess['name']}」")
         self.conn.commit()
         return True
 
@@ -168,6 +192,7 @@ class TrashMixin:
             "UPDATE mindmaps SET deleted_at = NULL WHERE id = ?",
             (mindmap_id,),
         )
+        self._activity("恢复", f"思维导图「{mmap['name']}」")
         self.conn.commit()
         return True
 
@@ -181,6 +206,7 @@ class TrashMixin:
             "UPDATE documents SET deleted_at = NULL WHERE id = ?",
             (document_id,),
         )
+        self._activity("恢复", f"文档「{doc['name']}」")
         self.conn.commit()
         return True
 
@@ -321,11 +347,13 @@ class TrashMixin:
         return [r["content"] for r in rows]
 
     def empty_trash(self) -> list:
+        count = len(self.list_trash_items())
         images = self.trash_image_files()
         self.conn.execute("DELETE FROM mindmaps WHERE deleted_at IS NOT NULL")
         self.conn.execute("DELETE FROM documents WHERE deleted_at IS NOT NULL")
         self.conn.execute("DELETE FROM sessions WHERE deleted_at IS NOT NULL")
         self.conn.execute("DELETE FROM folders WHERE deleted_at IS NOT NULL")
         self.conn.execute("DELETE FROM subjects WHERE deleted_at IS NOT NULL")
+        self._activity("清空回收站", f"{count} 项")
         self.conn.commit()
         return images

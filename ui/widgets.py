@@ -82,9 +82,9 @@ _TAG_SPECS = {
     },
     "codex": {
         "label": "Codex",
-        "fg": QColor("#0b6b5c"),
-        "g0": QColor(170, 232, 214, 220),
-        "g1": QColor(32, 168, 140, 118),
+        "fg": QColor("#c45c12"),
+        "g0": QColor(255, 226, 196, 225),
+        "g1": QColor(242, 154, 72, 128),
     },
     "done": {
         "label": "已完成",
@@ -822,6 +822,10 @@ class SessionTreeDelegate(QStyledItemDelegate):
         indent = 0
         if isinstance(tree, QTreeWidget):
             vw = tree.viewport().width()
+            vsb = tree.verticalScrollBar()
+            # 预留滚动条宽度，避免「换行变高 → 出现滚动条 → 变窄再换行」来回抖
+            if vsb is not None and not vsb.isVisible():
+                vw -= vsb.sizeHint().width()
             indent = tree.indentation()
             parent = index.parent()
             while parent.isValid():
@@ -1194,6 +1198,10 @@ class SessionTree(QTreeWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        vw = self.viewport().width()
+        if vw == getattr(self, "_last_layout_vw", None):
+            return
+        self._last_layout_vw = vw
         self.doItemsLayout()
 
     def _folder_drop_target(self, item):
@@ -1241,6 +1249,10 @@ class SubjectTree(QTreeWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        vw = self.viewport().width()
+        if vw == getattr(self, "_last_layout_vw", None):
+            return
+        self._last_layout_vw = vw
         self.doItemsLayout()
 
 

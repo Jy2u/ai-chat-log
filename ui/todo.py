@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (
 from ui.style import apply_glass_shadow
 from ui.widgets import MATCH_COLORS
 
-TODO_PANEL_W = 260
+TODO_PANEL_W = 520
+TODO_PANEL_MIN_W = 220
 DATE_COLOR_CYCLE = list(MATCH_COLORS.keys())
 TODO_MARKS = {
     "later": "延后",
@@ -395,8 +396,8 @@ class TodoPanel(QFrame):
         self._db = db
         self.setObjectName("todoDock")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        self.setFixedWidth(TODO_PANEL_W)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.setMinimumWidth(TODO_PANEL_MIN_W)
 
         glass = QFrame()
         glass.setObjectName("todoGlass")
@@ -410,6 +411,7 @@ class TodoPanel(QFrame):
         hint = QLabel("年-月-日-事情 · 单击待办可加备注")
         hint.setObjectName("todoHint")
         hint.setAlignment(Qt.AlignCenter)
+        hint.setWordWrap(True)
 
         self._input = QLineEdit()
         self._input.setObjectName("todoInput")

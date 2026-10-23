@@ -42,7 +42,7 @@ class MainWindow(SidebarMixin, TreeMixin, OpsMixin, ViewMixin, QMainWindow):
         )
 
         self.setWindowTitle("AI 对话记录器")
-        self.resize(1600, 740)
+        self.resize(1860, 740)
 
         self.pause_action = QAction("暂停记录", self)
         self.pause_action.setCheckable(True)

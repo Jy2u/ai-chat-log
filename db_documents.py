@@ -41,6 +41,7 @@ class DocumentMixin:
             " VALUES (?, '', ?, ?, ?, ?, ?, ?)",
             (name, now, now, folder_id, session_id, subject_id, order),
         )
+        self._activity("新建文档", f"「{name}」")
         self.conn.commit()
         return cur.lastrowid
 
@@ -71,17 +72,29 @@ class DocumentMixin:
             "UPDATE documents SET name = ?, updated_at = ? WHERE id = ?",
             (name, _now(), document_id),
         )
+        self._activity("重命名文档", f"「{name}」")
         self.conn.commit()
 
     def update_document_content(self, document_id: int, content: str):
+        current = self.get_document(document_id)
+        if current is not None and (current.get("content") or "") == (content or ""):
+            return
         self.conn.execute(
             "UPDATE documents SET content = ?, updated_at = ? WHERE id = ?",
             (content, _now(), document_id),
         )
+        name = current["name"] if current else "文档"
+        self._activity(
+            "编辑文档",
+            f"「{name}」",
+            coalesce_key=f"doc:{document_id}",
+        )
         self.conn.commit()
 
     def delete_document(self, document_id: int):
+        name = self._named(self.get_document, document_id, "文档")
         self.conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
+        self._activity("彻底删除", f"文档「{name}」")
         self.conn.commit()
 
     def move_document(
@@ -99,6 +112,10 @@ class DocumentMixin:
             " updated_at = ?"
             " WHERE id = ?",
             (folder_id, session_id, subject_id, order, _now(), document_id),
+        )
+        self._activity(
+            "移动文档",
+            f"「{self._named(self.get_document, document_id, '文档')}」",
         )
         self.conn.commit()
 
@@ -139,5 +156,6 @@ class DocumentMixin:
             ),
         )
         if commit:
+            self._activity("复制文档", f"「{name}」")
             self.conn.commit()
         return cur.lastrowid

@@ -19,7 +19,6 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QScrollArea,
@@ -43,7 +42,7 @@ from ui.icons import (
 )
 from ui.stash import StashPanel
 from ui.style import apply_glass_shadow
-from ui.todo import TODO_PANEL_W, TodoPanel
+from ui.todo import TODO_PANEL_MIN_W, TODO_PANEL_W, TodoPanel
 from ui.widgets import (
     ChatPage,
     LocalOnlyInterceptor,
@@ -147,6 +146,9 @@ class SidebarMixin:
         act_md = QAction("markdown语法", self)
         act_md.triggered.connect(self.show_markdown_help)
         bar.addAction(act_md)
+        act_log = QAction("操作日志", self)
+        act_log.triggered.connect(self.show_activity_log)
+        bar.addAction(act_log)
 
         self._auto_backup_hint = QLabel("尚未自动备份")
         self._auto_backup_hint.setObjectName("autoBackupHint")
@@ -302,11 +304,13 @@ class SidebarMixin:
         self._interceptor = LocalOnlyInterceptor()
         self._page.profile().setUrlRequestInterceptor(self._interceptor)
         self._web.setPage(self._page)
-        self._web.setStyleSheet("background: transparent;")
+        # 透明 WebEngine 在 Windows 上会和主窗口背景叠出高频闪
+        self._web.setStyleSheet("background: #e4eafc;")
 
         body_host = QWidget()
         body_host.setObjectName("bodyHost")
         body_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        body_host.setMinimumWidth(320)
         body_lay = QVBoxLayout(body_host)
         body_lay.setContentsMargins(0, 0, 0, 0)
         body_lay.setSpacing(0)
@@ -339,22 +343,22 @@ class SidebarMixin:
         self._side_collapse_timer.setInterval(160)
         self._side_collapse_timer.timeout.connect(self._try_collapse_sidebar)
 
-        todo_divider = QFrame()
-        todo_divider.setObjectName("todoDivider")
-        todo_divider.setAttribute(Qt.WA_StyledBackground, True)
-        todo_divider.setFixedWidth(8)
-        todo_divider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-
         self._todo_panel = TodoPanel(self._db)
-        self._todo_panel.setFixedWidth(TODO_PANEL_W)
 
-        main = QWidget()
-        main_lay = QHBoxLayout(main)
-        main_lay.setContentsMargins(0, 0, 0, 0)
-        main_lay.setSpacing(0)
-        main_lay.addWidget(body_host, 1)
-        main_lay.addWidget(todo_divider, 0)
-        main_lay.addWidget(self._todo_panel, 0)
+        main = QSplitter(Qt.Horizontal)
+        main.setObjectName("todoSplit")
+        main.setChildrenCollapsible(False)
+        main.setHandleWidth(8)
+        main.addWidget(body_host)
+        main.addWidget(self._todo_panel)
+        main.setStretchFactor(0, 1)
+        main.setStretchFactor(1, 0)
+        saved_todo = self._settings.value("todo_width", TODO_PANEL_W, type=int)
+        if saved_todo < TODO_PANEL_MIN_W:
+            saved_todo = TODO_PANEL_W
+        main.setSizes([10000, saved_todo])
+        main.splitterMoved.connect(self._on_todo_splitter_moved)
+        self._todo_split = main
 
         self._stash_panel = StashPanel(self._db)
         self._stash_panel.copied.connect(self._on_stash_copied)
@@ -466,13 +470,48 @@ class SidebarMixin:
         if self._suppress_cb:
             self._suppress_cb()
         QApplication.clipboard().setText(text)
+        self._note_activity("复制常用", "未记录正文")
         self._status.setText("已复制到剪贴板")
 
     def _todo_reserved_width(self) -> int:
         panel = getattr(self, "_todo_panel", None)
+        split = getattr(self, "_todo_split", None)
         if panel is None or not panel.isVisible():
             return 0
-        return TODO_PANEL_W + 8
+        handle = split.handleWidth() if split is not None else 8
+        return panel.width() + handle
+
+    def _apply_todo_width(self, width=None):
+        split = getattr(self, "_todo_split", None)
+        if split is None:
+            return
+        if width is None:
+            width = self._settings.value("todo_width", TODO_PANEL_W, type=int)
+        try:
+            width = int(width)
+        except (TypeError, ValueError):
+            width = TODO_PANEL_W
+        if width < TODO_PANEL_MIN_W:
+            width = TODO_PANEL_W
+        total = split.width()
+        handle = split.handleWidth()
+        if total <= 1:
+            split.setSizes([10000, width])
+            return
+        chat_w = max(320, total - width - handle)
+        split.setSizes([chat_w, width])
+
+    def _save_todo_width(self):
+        split = getattr(self, "_todo_split", None)
+        if split is None:
+            return
+        sizes = split.sizes()
+        if len(sizes) < 2 or sizes[1] < TODO_PANEL_MIN_W:
+            return
+        self._settings.setValue("todo_width", sizes[1])
+
+    def _on_todo_splitter_moved(self, *_):
+        self._save_todo_width()
 
     def _fit_sidebars_to_oneline(self, force=False):
         """只调整浮层里两列的宽度，不改聊天 / 导图画布尺寸。"""
@@ -482,8 +521,6 @@ class SidebarMixin:
         self._fitting_sidebars = True
         self._inner_split.setSizes([sw, fw])
         self._side_width = side_w
-        if getattr(self, "_todo_panel", None) is not None:
-            self._todo_panel.setFixedWidth(TODO_PANEL_W)
         self._subject_tree.doItemsLayout()
         self._tree.doItemsLayout()
         self._sync_side_overlay()
@@ -517,6 +554,7 @@ class SidebarMixin:
 
     def _finish_sidebar_setup(self):
         self._fit_sidebars_to_oneline()
+        self._apply_todo_width()
         QTimer.singleShot(0, self._mark_sidebars_ready)
 
     def _mark_sidebars_ready(self):
@@ -580,24 +618,32 @@ class SidebarMixin:
             content.setFixedSize(cw, max(1, h))
 
     def _sync_side_overlay(self):
+        if getattr(self, "_syncing_side_overlay", False):
+            return
         host = getattr(self, "_body_host", None)
         side = getattr(self, "_side", None)
         if host is None or side is None:
             return
-        win_w = self._sidebar_window_width()
-        h = host.height()
-        top_left = host.mapToGlobal(QPoint(0, 0))
-        geo = QRect(top_left.x(), top_left.y(), win_w, h)
-        if side.minimumWidth() != 0:
-            side.setMinimumWidth(0)
-            side.setMaximumWidth(16777215)
-        if side.geometry() != geo:
-            side.setGeometry(geo)
-        self._sync_side_clip_width()
-        if not self._side_anim_running():
-            side.raise_()
-        if self.isVisible() and not side.isVisible():
-            side.show()
+        self._syncing_side_overlay = True
+        try:
+            win_w = self._sidebar_window_width()
+            h = host.height()
+            top_left = host.mapToGlobal(QPoint(0, 0))
+            geo = QRect(top_left.x(), top_left.y(), win_w, h)
+            if side.minimumWidth() != 0:
+                side.setMinimumWidth(0)
+                side.setMaximumWidth(16777215)
+            geo_changed = side.geometry() != geo
+            if geo_changed:
+                side.setGeometry(geo)
+            self._sync_side_clip_width()
+            if self.isVisible() and not side.isVisible():
+                side.show()
+                side.raise_()
+            elif geo_changed and not self._side_anim_running():
+                side.raise_()
+        finally:
+            self._syncing_side_overlay = False
 
     def _cursor_over_sidebar(self) -> bool:
         side = getattr(self, "_side", None)

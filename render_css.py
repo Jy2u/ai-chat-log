@@ -8,7 +8,7 @@ _pygments_css = HtmlFormatter(style="monokai").get_style_defs(".codeblock")
 _CSS = (
     """
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: auto; }
 body {
     margin: 0;
     min-height: 100vh;
@@ -18,30 +18,6 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 ::selection { background: rgba(99, 125, 255, .3); }
-
-/* 背景光斑：液态玻璃需要有色彩可供模糊透出 */
-.blob {
-    position: fixed; border-radius: 50%;
-    filter: blur(90px); z-index: 0; pointer-events: none;
-}
-.b1 {
-    width: 620px; height: 620px; top: -180px; left: -160px;
-    background: rgba(124, 152, 255, .46);
-    animation: drift1 26s ease-in-out infinite alternate;
-}
-.b2 {
-    width: 540px; height: 540px; bottom: -200px; right: -140px;
-    background: rgba(255, 158, 208, .38);
-    animation: drift2 32s ease-in-out infinite alternate;
-}
-.b3 {
-    width: 480px; height: 480px; top: 28%; left: 50%;
-    background: rgba(118, 214, 213, .3);
-    animation: drift3 38s ease-in-out infinite alternate;
-}
-@keyframes drift1 { to { transform: translate(70px, 50px) scale(1.1); } }
-@keyframes drift2 { to { transform: translate(-60px, -40px) scale(1.06); } }
-@keyframes drift3 { to { transform: translate(-80px, 60px); } }
 
 .wrap {
     position: relative; z-index: 1;
@@ -63,8 +39,6 @@ body {
 .search-head { justify-content: flex-start; margin: 24px 0 12px; }
 .page-head span, .search-head span {
     background: linear-gradient(180deg, rgba(255, 255, 255, .82), rgba(242, 246, 255, .7));
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, .92);
     border-top-color: #ffffff;
     border-bottom-color: rgba(146, 162, 205, .38);
@@ -84,8 +58,6 @@ body {
     width: 88px; height: 88px; line-height: 88px;
     margin: 0 auto 18px; font-size: 38px; border-radius: 50%;
     background: linear-gradient(180deg, rgba(255, 255, 255, .88), rgba(244, 247, 255, .78));
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, .92);
     border-top-color: #ffffff;
     border-bottom-color: rgba(146, 162, 205, .38);
@@ -127,8 +99,6 @@ body {
 .msg.user .bubble {
     background: linear-gradient(160deg,
         rgba(125, 153, 255, .96), rgba(74, 99, 240, .92));
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, .45);
     border-top-color: rgba(255, 255, 255, .75);
     border-bottom-color: rgba(48, 66, 168, .55);
@@ -140,8 +110,6 @@ body {
 }
 .msg.ai .bubble {
     background: linear-gradient(180deg, rgba(255, 255, 255, .88), rgba(244, 247, 255, .78));
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, .92);
     border-top-color: #ffffff;
     border-bottom-color: rgba(146, 162, 205, .38);
@@ -193,8 +161,6 @@ body {
 .bubble pre.codeblock {
     position: relative;
     background: linear-gradient(180deg, rgba(30, 34, 48, .95), rgba(20, 23, 34, .93));
-    backdrop-filter: blur(20px) saturate(150%);
-    -webkit-backdrop-filter: blur(20px) saturate(150%);
     border: 1px solid rgba(255, 255, 255, .16);
     border-top-color: rgba(255, 255, 255, .3);
     border-bottom-color: rgba(0, 0, 0, .5);
@@ -210,8 +176,9 @@ body {
     position: absolute; top: 7px; right: 14px;
     font-size: 11px; color: #98a0b8; user-select: none;
 }
-.bubble pre.codeblock code {
-    background: none; border: none; color: inherit;
+.bubble pre.codeblock code, .bubble pre code {
+    display: block;
+    background: none; border: none; box-shadow: none; color: inherit;
     padding: 0; border-radius: 0;
     font-size: 13px; line-height: 1.55; white-space: pre;
 }
@@ -472,8 +439,6 @@ html.chat-ui .wrap { padding-right: 196px; max-width: 1100px; }
     display: flex; flex-direction: column;
     padding: 12px 8px 10px;
     background: linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(240, 244, 255, .84));
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, .92);
     border-top-color: #ffffff;
     border-bottom-color: rgba(146, 162, 205, .38);
@@ -660,8 +625,6 @@ body.mm-relink .mm-handle { cursor: grabbing; }
     font-size: 12px; line-height: 1.35; text-align: center;
     color: #454e68;
     background: linear-gradient(180deg, rgba(255, 255, 255, .82), rgba(242, 246, 255, .7));
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, .92);
     border-top-color: #ffffff;
     border-bottom-color: rgba(146, 162, 205, .38);
@@ -680,8 +643,6 @@ body.mm-relink .mm-handle { cursor: grabbing; }
     padding: 10px 14px;
     border-radius: 18px;
     background: linear-gradient(180deg, rgba(255, 255, 255, .88), rgba(244, 247, 255, .78));
-    backdrop-filter: blur(26px) saturate(180%);
-    -webkit-backdrop-filter: blur(26px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, .92);
     border-top-color: #ffffff;
     border-bottom-color: rgba(146, 162, 205, .38);
@@ -712,8 +673,6 @@ body.mm-relink .mm-handle { cursor: grabbing; }
 }
 .mm-node.text {
     background: transparent;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
     box-shadow: none;
     border: 1px dashed rgba(104, 119, 162, .82);
     border-radius: 8px;
@@ -760,11 +719,25 @@ body.mm-relink .mm-handle { cursor: grabbing; }
                 0 0 14px 4px rgba(255, 145, 40, .48),
                 0 0 28px 8px rgba(255, 140, 40, .26);
 }
+.mm-edit-actions {
+    position: fixed; z-index: 19;
+    display: flex; flex-direction: column; gap: 4px;
+}
+.mm-edit-actions[hidden] { display: none; }
+.mm-edit-actions button {
+    width: 28px; height: 28px; padding: 0;
+    border: 1px solid rgba(255, 255, 255, .94); border-radius: 9px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(222, 231, 255, .92));
+    box-shadow: 0 3px 10px rgba(58, 78, 130, .18);
+    color: #354b97; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.mm-edit-actions button:hover {
+    background: #d9e4ff; color: #4a63f0;
+}
+.mm-edit-actions button:active { background: #c6d6ff; }
 .mm-menu {
     position: fixed; z-index: 20; min-width: 132px;
     background: linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(240, 244, 255, .84));
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, .92);
     border-top-color: #ffffff;
     border-bottom-color: rgba(146, 162, 205, .38);

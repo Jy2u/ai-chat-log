@@ -1,6 +1,6 @@
 """SQLite 思维导图相关方法，作为 Database 的 Mixin。"""
 
-from db import _now
+from db import _clip, _now
 
 
 class MindmapMixin:
@@ -38,6 +38,7 @@ class MindmapMixin:
             " VALUES (?, NULL, 'box', ?, 0, ?, ?)",
             (mid, name, now, now),
         )
+        self._activity("新建思维导图", f"「{name}」")
         self.conn.commit()
         return mid
 
@@ -82,10 +83,13 @@ class MindmapMixin:
                     " WHERE id = ?",
                     (name, _now(), root["id"]),
                 )
+        self._activity("重命名思维导图", f"「{name}」")
         self.conn.commit()
 
     def delete_mindmap(self, mindmap_id: int):
+        name = self._named(self.get_mindmap, mindmap_id, "思维导图")
         self.conn.execute("DELETE FROM mindmaps WHERE id = ?", (mindmap_id,))
+        self._activity("彻底删除", f"思维导图「{name}」")
         self.conn.commit()
 
     def move_mindmap(
@@ -103,6 +107,10 @@ class MindmapMixin:
             " SET folder_id = ?, session_id = ?, subject_id = ?, sort_order = ?"
             " WHERE id = ?",
             (folder_id, session_id, subject_id, order, mindmap_id),
+        )
+        self._activity(
+            "移动思维导图",
+            f"「{self._named(self.get_mindmap, mindmap_id, '思维导图')}」",
         )
         self.conn.commit()
 
@@ -174,6 +182,7 @@ class MindmapMixin:
             if a and b:
                 self._insert_edge(new_mid, a, b, e.get("label") or "")
         if commit:
+            self._activity("复制思维导图", f"「{name}」")
             self.conn.commit()
         return new_mid
 
@@ -246,6 +255,8 @@ class MindmapMixin:
         if parent_id is not None:
             self._insert_edge(mindmap_id, parent_id, new_id, "")
         self._stamp_mindmap(mindmap_id)
+        title = self._named(self.get_mindmap, mindmap_id, "思维导图")
+        self._activity("新建导图节点", f"「{title}」")
         self.conn.commit()
         return new_id
 
@@ -277,6 +288,10 @@ class MindmapMixin:
         self.conn.execute("DELETE FROM mindmap_edges WHERE id = ?", (edge_id,))
         self._refresh_primary_parent(to_id)
         self._stamp_mindmap(edge["mindmap_id"])
+        self._activity(
+            "删除导图连线",
+            f"「{self._named(self.get_mindmap, edge['mindmap_id'], '思维导图')}」",
+        )
         self.conn.commit()
 
     def _insert_edge(self, mindmap_id: int, from_id: int, to_id: int, label: str = ""):
@@ -333,6 +348,10 @@ class MindmapMixin:
                 (from_id, self._next_child_sort(from_id), to_id),
             )
         self._stamp_mindmap(a["mindmap_id"])
+        self._activity(
+            "连接导图节点",
+            f"「{self._named(self.get_mindmap, a['mindmap_id'], '思维导图')}」",
+        )
         self.conn.commit()
         return ""
 
@@ -390,6 +409,10 @@ class MindmapMixin:
                 (new_id, child["id"]),
             )
         self._stamp_mindmap(child["mindmap_id"])
+        self._activity(
+            "插入导图节点",
+            f"「{self._named(self.get_mindmap, child['mindmap_id'], '思维导图')}」",
+        )
         self.conn.commit()
         return new_id
 
@@ -401,6 +424,7 @@ class MindmapMixin:
         edge = self.get_mindmap_edge(edge_id)
         if edge:
             self._stamp_mindmap(edge["mindmap_id"])
+            self._activity("编辑连线标注", _clip(text))
         self.conn.commit()
 
     def toggle_mindmap_highlight(self, node_id: int) -> bool:
@@ -413,6 +437,10 @@ class MindmapMixin:
             (nxt, node_id),
         )
         self._stamp_mindmap(node["mindmap_id"])
+        self._activity(
+            "高亮导图节点" if nxt else "取消导图高亮",
+            _clip(node.get("content") or ""),
+        )
         self.conn.commit()
         return bool(nxt)
 
@@ -422,6 +450,7 @@ class MindmapMixin:
                 "UPDATE mindmap_nodes SET pos_x = ?, pos_y = ? WHERE id = ?",
                 (it["x"], it["y"], it["id"]),
             )
+        self._activity_mindmap_layout(items[0]["id"] if items else None)
         self.conn.commit()
 
     def set_mindmap_box(self, node_id: int, x, y, w, h):
@@ -430,7 +459,18 @@ class MindmapMixin:
             " SET pos_x = ?, pos_y = ?, box_w = ?, box_h = ? WHERE id = ?",
             (x, y, w, h, node_id),
         )
+        self._activity_mindmap_layout(node_id)
         self.conn.commit()
+
+    def _activity_mindmap_layout(self, node_id):
+        node = self.get_mindmap_node(node_id) if node_id else None
+        mid = node["mindmap_id"] if node else 0
+        title = self._named(self.get_mindmap, mid, "思维导图")
+        self._activity(
+            "调整导图布局",
+            f"「{title}」",
+            coalesce_key=f"mm-layout:{mid}",
+        )
 
     def _guess_node_size(self, node, kind=None):
         kind = kind or (node or {}).get("kind") or "box"
@@ -516,6 +556,10 @@ class MindmapMixin:
         self._refresh_primary_parent(old_to)
         self._refresh_primary_parent(new_to)
         self._stamp_mindmap(edge["mindmap_id"])
+        self._activity(
+            "改导图连线",
+            f"「{self._named(self.get_mindmap, edge['mindmap_id'], '思维导图')}」",
+        )
         self.conn.commit()
         return ""
 
@@ -532,6 +576,12 @@ class MindmapMixin:
             )
         elif node:
             self._stamp_mindmap(node["mindmap_id"])
+        if node:
+            self._activity(
+                "编辑导图节点",
+                _clip(content),
+                coalesce_key=f"mm-node:{node_id}",
+            )
         self.conn.commit()
 
     def delete_mindmap_node_keep_children(self, node_id: int):
@@ -580,17 +630,20 @@ class MindmapMixin:
                 )
         self.conn.execute("DELETE FROM mindmap_nodes WHERE id = ?", (node_id,))
         self._stamp_mindmap(node["mindmap_id"])
+        self._activity("删除导图节点", _clip(node.get("content") or ""))
         self.conn.commit()
 
-    def delete_mindmap_node(self, node_id: int):
+    def delete_mindmap_node(self, node_id: int, _log: bool = True):
         node = self.get_mindmap_node(node_id)
         kids = self.conn.execute(
             "SELECT id FROM mindmap_nodes WHERE parent_id = ?", (node_id,)
         ).fetchall()
         for kid in kids:
-            self.delete_mindmap_node(kid["id"])
+            self.delete_mindmap_node(kid["id"], _log=False)
         self.conn.execute("DELETE FROM mindmap_nodes WHERE id = ?", (node_id,))
         if node:
             self._stamp_mindmap(node["mindmap_id"])
+            if _log:
+                self._activity("删除导图节点及分支", _clip(node.get("content") or ""))
         self.conn.commit()
 

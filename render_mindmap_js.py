@@ -7,6 +7,14 @@ _MM_JS = r"""
     menu.className = "mm-menu";
     menu.hidden = true;
     document.body.appendChild(menu);
+    var editingNode = null;
+    var editActions = document.createElement("div");
+    editActions.className = "mm-edit-actions";
+    editActions.hidden = true;
+    editActions.innerHTML =
+        '<button type="button" data-act="addbox" title="新建子框" aria-label="新建子框">框</button>' +
+        '<button type="button" data-act="addtext" title="新建子句" aria-label="新建子句">句</button>';
+    document.body.appendChild(editActions);
     var marquee = document.createElement("div");
     marquee.className = "mm-marquee";
     marquee.hidden = true;
@@ -22,6 +30,23 @@ _MM_JS = r"""
     var selectedEids = {};
 
     function hideMenu() { menu.hidden = true; }
+
+    function positionEditActions() {
+        if (!editingNode || editActions.hidden) return;
+        var rect = editingNode.getBoundingClientRect();
+        editActions.style.left = (rect.right + 8) + "px";
+        editActions.style.top = Math.max(8, rect.top + rect.height / 2 - 30) + "px";
+    }
+    function hideEditActions() {
+        editActions.hidden = true;
+        editingNode = null;
+    }
+    function editedText(body) {
+        var text = (body.innerText || "").replace(/\u00a0/g, " ");
+        return text.slice(-1) === "\n" ? text.slice(0, -1) : text;
+    }
+    window.addEventListener("resize", positionEditActions);
+    window.addEventListener("scroll", positionEditActions, true);
 
     function sendApp(url) {
         if (window.appCall) window.appCall(url);
@@ -63,6 +88,7 @@ _MM_JS = r"""
         pan.style.left = cam.tx + "px";
         pan.style.top = cam.ty + "px";
         canvas.style.zoom = (Math.abs(cam.scale - 1) < 0.001) ? "" : String(cam.scale);
+        positionEditActions();
     }
 
     function sendCam() {
@@ -377,6 +403,7 @@ _MM_JS = r"""
         });
         updateHandles(byId);
         updatePorts();
+        positionEditActions();
     }
 
     function subtreeOf(rootEl) {
@@ -661,6 +688,37 @@ _MM_JS = r"""
         menu.style.left = e.clientX + "px";
         menu.style.top = e.clientY + "px";
     });
+    function addWithPositions(act, id, content) {
+        var items = [];
+        document.querySelectorAll(".mm-node").forEach(function (el) {
+            items.push({
+                id: parseInt(el.getAttribute("data-id"), 10),
+                x: parseFloat(el.style.left) || 0,
+                y: parseFloat(el.style.top) || 0
+            });
+        });
+        var payload = { positions: items };
+        if (typeof content === "string") payload.content = content;
+        sendApp("app://" + act + "/" + id + "#" +
+            encodeURIComponent(JSON.stringify(payload)));
+    }
+    editActions.addEventListener("mousedown", function (e) {
+        // 按钮点击前保持编辑框焦点，避免 blur 提前保存并刷新页面。
+        if (e.button === 0) e.preventDefault();
+        e.stopPropagation();
+    });
+    editActions.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var btn = e.target.closest("button");
+        if (!btn || !editingNode) return;
+        var node = editingNode;
+        var body = node.querySelector(".mm-body");
+        var content = editedText(body);
+        body.contentEditable = "false";
+        hideEditActions();
+        // 一次动作同时保存父节点和新建子节点，避免两次刷新互相覆盖。
+        addWithPositions(btn.getAttribute("data-act"), node.getAttribute("data-id"), content);
+    });
     menu.addEventListener("click", function (e) {
         var btn = e.target.closest("button");
         if (!btn || !currentId) return;
@@ -674,16 +732,7 @@ _MM_JS = r"""
         }
         if (act === "addbox" || act === "addtext" ||
             act === "edgebox" || act === "edgetext") {
-            var items = [];
-            document.querySelectorAll(".mm-node").forEach(function (el) {
-                items.push({
-                    id: parseInt(el.getAttribute("data-id"), 10),
-                    x: parseFloat(el.style.left) || 0,
-                    y: parseFloat(el.style.top) || 0
-                });
-            });
-            sendApp("app://" + act + "/" + currentId + "#" +
-                encodeURIComponent(JSON.stringify({ positions: items })));
+            addWithPositions(act, currentId);
             return;
         }
         sendApp("app://" + act + "/" + currentId);
@@ -705,6 +754,7 @@ _MM_JS = r"""
             if (dragMoved) { e.preventDefault(); return; }
             e.preventDefault();
             hideMenu();
+            selectNode(node);
             var raw = node.getAttribute("data-raw");
             body.textContent = raw === null ? (body.innerText || "") : raw;
             body.contentEditable = "true";
@@ -714,6 +764,9 @@ _MM_JS = r"""
             range.selectNodeContents(body);
             sel.removeAllRanges();
             sel.addRange(range);
+            editingNode = node;
+            editActions.hidden = false;
+            positionEditActions();
         });
         body.addEventListener("input", function () {
             syncNodeProse(node);
@@ -722,8 +775,8 @@ _MM_JS = r"""
         body.addEventListener("blur", function () {
             if (body.contentEditable !== "true") return;
             body.contentEditable = "false";
-            var text = (body.innerText || "").replace(/\u00a0/g, " ");
-            if (text.slice(-1) === "\n") text = text.slice(0, -1);
+            hideEditActions();
+            var text = editedText(body);
             sendApp("app://savenode/" + node.getAttribute("data-id") +
                 "#" + encodeURIComponent(text));
         });

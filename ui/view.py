@@ -31,6 +31,7 @@ class ViewMixin:
             self.reload_chat()
 
     def open_trash(self):
+        self._note_activity("打开回收站")
         self._search_mode = False
         self._search.blockSignals(True)
         self._search.clear()
@@ -63,6 +64,30 @@ class ViewMixin:
             f"会话「{session['name']}」 · {len(messages)} 条记录"
             " · 复制文字后点悬浮条即可记录，关闭窗口将最小化到托盘"
         )
+
+    def _patch_chat(self, upsert_id=None, remove_id=None, focus_id=None):
+        """在现有聊天页里局部更新消息；页面不匹配时安全回退为完整刷新。"""
+        sid = self.current_session_id()
+        session = self._db.get_session(sid) if sid is not None else None
+        if session is None:
+            self.reload_chat()
+            return
+        messages = self._db.get_messages(sid)
+        script = render.chat_patch_js(
+            session,
+            messages,
+            upsert_id=upsert_id,
+            remove_id=remove_id,
+            focus_id=focus_id,
+        )
+        # DOM 已经与磁盘上的 view.html 不同；强制下一次真正切页时重建。
+        self._loaded_html = None
+
+        def finished(ok):
+            if not ok:
+                self.reload_chat()
+
+        self._page.runJavaScript(script, finished)
 
     def reload_mindmap(self):
         mid = self._current_mid
@@ -117,13 +142,25 @@ class ViewMixin:
 
     def notify_message_added(self, message_id=None, session_id=None):
         """悬浮条存入新消息后由入口层调用：切到该会话并滚到刚加入的那条。"""
+        sid = session_id or self.current_session_id()
+        can_patch = (
+            not self._search_mode
+            and not self._trash_mode
+            and self._current_kind == "session"
+            and self._current_sid == sid
+        )
         if self._search_mode:
             self._exit_search_mode()
         self._trash_mode = False
-        sid = session_id or self.current_session_id()
-        self._highlight_msg_id = message_id
-        self.reload_sessions(select_id=sid, select_kind="session")
-        self._highlight_msg_id = None
+        if can_patch:
+            self.reload_sessions(
+                select_id=sid, select_kind="session", reload_view=False
+            )
+            self._patch_chat(upsert_id=message_id, focus_id=message_id)
+        else:
+            self._highlight_msg_id = message_id
+            self.reload_sessions(select_id=sid, select_kind="session")
+            self._highlight_msg_id = None
         self.setWindowState(self.windowState() & ~Qt.WindowMinimized)
         self.show()
         self.raise_()
@@ -140,6 +177,7 @@ class ViewMixin:
         results = self._db.search(keyword)
         self._write_and_load(render.build_search_page(keyword, results))
         self._web.setContextMenuPolicy(Qt.DefaultContextMenu)
+        self._note_activity("搜索", f"「{keyword}」，{len(results)} 条结果")
         self._status.setText(
             f"搜索「{keyword}」 · {len(results)} 条结果 · 清空搜索框返回会话"
         )
@@ -238,12 +276,19 @@ class ViewMixin:
                 path = os.path.join(IMAGES_DIR, msg["content"])
                 QApplication.clipboard().setImage(QImage(path))
                 self._status.setText("已复制图片到剪贴板")
+                self._note_activity("复制记录", "图片")
             else:
                 QApplication.clipboard().setText(msg["content"])
                 self._status.setText("已复制原文到剪贴板")
+                self._note_activity("复制记录", "文字")
         elif action == "flip":
             self._db.flip_role(int(arg))
-            self.reload_chat()
+            self.reload_sessions(
+                select_id=msg["session_id"],
+                select_kind="session",
+                reload_view=False,
+            )
+            self._patch_chat(upsert_id=int(arg))
         elif action == "del":
             ret = QMessageBox.question(self, "删除记录", "确定删除这条记录吗？")
             if ret == QMessageBox.Yes:
@@ -253,7 +298,12 @@ class ViewMixin:
                     except OSError:
                         pass
                 self._db.delete_message(int(arg))
-                self.reload_sessions(select_id=msg["session_id"])
+                self.reload_sessions(
+                    select_id=msg["session_id"],
+                    select_kind="session",
+                    reload_view=False,
+                )
+                self._patch_chat(remove_id=int(arg))
 
     def _handle_mindmap_action(self, action: str, node_id: int, extra: str = ""):
         if action == "setpos":
@@ -357,9 +407,13 @@ class ViewMixin:
                 payload = json.loads(extra) if extra else {}
                 items = payload.get("positions") or []
             except (TypeError, json.JSONDecodeError):
+                payload = {}
                 items = []
             if items:
                 self._db.set_mindmap_positions(items)
+            content = payload.get("content")
+            if isinstance(content, str):
+                self._db.update_mindmap_node(node_id, content)
             self._db.add_mindmap_node(
                 node["mindmap_id"],
                 node_id,
@@ -562,7 +616,13 @@ class ViewMixin:
         dlg = SettingsDialog(self, self.pause_action, self.autostart_action)
         dlg.exec()
 
+    def show_activity_log(self):
+        from ui.log_dialog import ActivityLogDialog
+
+        ActivityLogDialog(self._db, self).exec()
+
     def _on_pause_toggled(self, checked: bool):
+        self._note_activity("暂停记录" if checked else "恢复记录")
         self._status.setText(
             "已暂停记录，复制内容不会弹出悬浮条" if checked else "已恢复记录"
         )
@@ -576,6 +636,7 @@ class ViewMixin:
             self.autostart_action.setChecked(not checked)
             self.autostart_action.blockSignals(False)
             return
+        self._note_activity("开启开机自启" if checked else "关闭开机自启")
         self._status.setText(
             "已开启开机自启动，开机后自动缩在托盘"
             if checked

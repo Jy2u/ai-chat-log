@@ -378,13 +378,11 @@ QMenu::separator {
     color: #6b75d8;
 }
 
-#todoDivider {
+#todoSplit::handle {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 rgba(255, 255, 255, 0),
         stop:0.5 rgba(255, 255, 255, 0.55),
         stop:1 rgba(255, 255, 255, 0));
-    border: none;
-    min-width: 8px; max-width: 8px;
 }
 #todoDock {
     background: transparent;
@@ -712,16 +710,58 @@ QCheckBox::indicator { width: 17px; height: 17px; }
     color: #8b94ad; font-size: 12px; font-weight: 600;
 }
 
-#importHint {
-    color: #656e88; font-size: 12px;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(255, 255, 255, 0.8), stop:1 rgba(243, 246, 255, 0.64));
+  #importSourceSwitch {
+      background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+          stop:0 rgba(255, 255, 255, 0.92), stop:1 rgba(236, 241, 255, 0.78));
+      border: 1px solid rgba(255, 255, 255, 0.96);
+      border-bottom: 1px solid rgba(134, 151, 201, 0.38);
+      border-radius: 14px;
+  }
+  #importSourceButton {
+      background: transparent;
+      border: none;
+      border-radius: 11px;
+      color: #69728f;
+      font-size: 13px;
+      font-weight: 600;
+      min-width: 142px;
+      padding: 7px 16px;
+  }
+  #importSourceButton:hover:!checked {
+      background: rgba(255, 255, 255, 0.62);
+      color: #5264b8;
+  }
+  #importSourceButton:checked {
+      background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+          stop:0 rgba(132, 158, 255, 0.96), stop:1 rgba(79, 105, 238, 0.96));
+      border: 1px solid rgba(255, 255, 255, 0.62);
+      color: #ffffff;
+  }
+  #importHint {
+      color: #656e88; font-size: 12px;
+      background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+          stop:0 rgba(255, 255, 255, 0.8), stop:1 rgba(243, 246, 255, 0.64));
     border: 1px solid rgba(255, 255, 255, 0.95);
     border-top: 1px solid #ffffff;
-    border-bottom: 1px solid rgba(146, 162, 205, 0.28);
-    border-radius: 14px;
-    padding: 9px 15px;
-}
+      border-bottom: 1px solid rgba(146, 162, 205, 0.28);
+      border-radius: 14px;
+  }
+  #importHintText {
+      color: #656e88; font-size: 12px;
+      background: transparent; border: none;
+  }
+  #importChooseSnapshot,
+  #importSelectAll {
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(145, 160, 205, 0.34);
+      border-radius: 9px;
+      color: #59678f;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 10px;
+  }
+  #importChooseSnapshot:hover,
+  #importSelectAll:hover { background: #ffffff; color: #4a63f0; }
 #importTableWrap {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 rgba(255, 255, 255, 0.84), stop:1 rgba(246, 249, 255, 0.72));
@@ -767,5 +807,37 @@ QCheckBox::indicator { width: 17px; height: 17px; }
 #importTable QTableCornerButton::section {
     background: transparent; border: none;
 }
+#importTree {
+    background: transparent;
+    border: none;
+    outline: 0;
+    font-size: 12.5px;
+    color: #2c3345;
+    selection-color: #33408f;
+    selection-background-color: rgba(150, 175, 255, 0.34);
+}
+#importTree::item {
+    padding: 4px 8px;
+    border: none;
+    border-bottom: 1px solid rgba(150, 168, 210, 0.22);
+}
+#importTree::item:hover { background: rgba(255, 255, 255, 0.82); }
+#importTree::item:selected,
+#importTree::item:selected:active,
+#importTree::item:selected:!active {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(148, 174, 255, 0.55), stop:1 rgba(103, 133, 245, 0.42));
+    color: #2b3776;
+}
+#importTree QHeaderView { background: transparent; }
+#importTree QHeaderView::section {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(255, 255, 255, 0.96), stop:1 rgba(238, 243, 255, 0.82));
+    border: none;
+    border-bottom: 1px solid rgba(146, 162, 205, 0.36);
+    color: #737d9c; font-size: 12px; font-weight: 600;
+    padding: 8px 10px;
+}
+#importTree QHeaderView::section:first { border-top-left-radius: 11px; }
+#importTree QHeaderView::section:last { border-top-right-radius: 11px; }
 """
-

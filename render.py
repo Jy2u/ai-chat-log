@@ -1,10 +1,13 @@
 """渲染层：Markdown 转 HTML、聊天页面模板（液态玻璃风格）、会话导出。"""
 
+import base64
 import html
+import json
 import re
 import shutil
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from markdown_it import MarkdownIt
 from pygments import highlight as pyg_highlight
@@ -205,11 +208,32 @@ def _page(body: str, scroll_bottom: bool, wide: bool = False, extra_js: str = ""
         if katex_ok
         else ""
     )
-    scroll = (
-        "window.scrollTo(0, document.body.scrollHeight);"
-        if scroll_bottom
-        else ""
-    )
+    root_class = ' class="preposition-bottom"' if scroll_bottom else ""
+    scroll = ""
+    if scroll_bottom:
+        # WebEngine 默认会先画出页面顶部，再执行页尾脚本滚到底部。长会话因此
+        # 会明显闪到第一条再弹回来。先隐藏正文，等本地图片等资源完成布局后
+        # 定位到底部，再在下一帧显示，可以避免把中间态呈现给用户。
+        scroll = r"""
+(function () {
+    var done = false;
+    function positionAndReveal() {
+        if (done) return;
+        done = true;
+        var root = document.documentElement;
+        var y = Math.max(document.body.scrollHeight, root.scrollHeight);
+        window.scrollTo(0, y);
+        requestAnimationFrame(function () {
+            y = Math.max(document.body.scrollHeight, root.scrollHeight);
+            window.scrollTo(0, y);
+            root.classList.remove("preposition-bottom");
+        });
+    }
+    if (document.readyState === "complete") positionAndReveal();
+    else window.addEventListener("load", positionAndReveal, { once: true });
+    setTimeout(positionAndReveal, 1200);
+})();
+"""
     katex_js = (
         """
 <script src="katex/katex.min.js"></script>
@@ -262,11 +286,12 @@ document.addEventListener("click", function (e) {
 </script>
 """
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<style>{_CSS}</style>
+<html{root_class}><head><meta charset="utf-8">
+<style>{_CSS}
+html.preposition-bottom body {{ visibility: hidden; }}
+</style>
 {katex_head}</head>
 <body>
-<div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
 <div class="{wrap_cls}">{body}</div>
 {katex_js}<script>{scroll}</script>
 {bridge}
@@ -328,13 +353,11 @@ def _msg_nav_preview(msg: dict, limit: int = 42) -> str:
 
 _CHAT_NAV_JS = r"""
 (function () {
-    document.documentElement.classList.add("chat-ui");
-    var items = [].slice.call(document.querySelectorAll(".chat-nav-item"));
-    if (!items.length) return;
-    var msgs = items.map(function (a) {
-        return document.getElementById((a.getAttribute("href") || "").slice(1));
-    });
+    var state = { items: [], msgs: [] };
     function sync() {
+        var items = state.items;
+        var msgs = state.msgs;
+        if (!items.length) return;
         var y = window.scrollY + Math.max(80, window.innerHeight * 0.18);
         var cur = 0;
         for (var i = 0; i < msgs.length; i++) {
@@ -350,18 +373,30 @@ _CHAT_NAV_JS = r"""
             }
         }
     }
-    items.forEach(function (a) {
-        a.addEventListener("click", function (e) {
+    function refresh() {
+        state.items = [].slice.call(document.querySelectorAll(".chat-nav-item"));
+        state.msgs = state.items.map(function (a) {
+            return document.getElementById((a.getAttribute("href") || "").slice(1));
+        });
+        document.documentElement.classList.toggle("chat-ui", state.items.length > 0);
+        sync();
+    }
+    if (!window.__chatNavInstalled) {
+        document.addEventListener("click", function (e) {
+            var a = e.target.closest && e.target.closest(".chat-nav-item");
+            if (!a) return;
             e.preventDefault();
             var el = document.getElementById((a.getAttribute("href") || "").slice(1));
             if (!el) return;
             el.scrollIntoView({ behavior: "smooth", block: "start" });
             el.classList.add("flash");
             setTimeout(function () { el.classList.remove("flash"); }, 1200);
-        });
-    });
-    window.addEventListener("scroll", sync, { passive: true });
-    sync();
+        }, true);
+        window.addEventListener("scroll", sync, { passive: true });
+        window.__chatNavInstalled = true;
+    }
+    window.__refreshChatNav = refresh;
+    refresh();
 })();
 """
 
@@ -407,21 +442,130 @@ def _chat_nav_html(messages: list) -> str:
     )
 
 
-def build_chat_page(session: dict, messages: list, highlight_id=None) -> str:
-    if not messages:
-        body = (
-            '<div class="empty"><div class="big">&#128172;</div>'
-            "复制任意文字后，在弹出的悬浮条上<br>"
-            "点「提问」或「回答」，记录就会出现在这里</div>"
-        )
-        return _page(body, scroll_bottom=False)
+def _chat_empty_html() -> str:
+    return (
+        '<div class="empty"><div class="big">&#128172;</div>'
+        "复制任意文字后，在弹出的悬浮条上<br>"
+        "点「提问」或「回答」，记录就会出现在这里</div>"
+    )
 
-    head = (
+
+def _chat_head_html(session: dict, count: int) -> str:
+    return (
         '<div class="page-head"><span>'
         f'会话「{html.escape(session["name"])}」'
         f" · 创建于 {session['created_at']}"
-        f" · {len(messages)} 条记录</span></div>"
+        f" · {count} 条记录</span></div>"
     )
+
+
+def chat_patch_js(
+    session: dict,
+    messages: list,
+    upsert_id=None,
+    remove_id=None,
+    focus_id=None,
+) -> str:
+    """局部更新当前聊天 DOM，避免每次增删消息都重载整份 view.html。"""
+    upsert = None
+    if upsert_id is not None:
+        upsert = next((m for m in messages if m["id"] == upsert_id), None)
+    upsert_html = _message_html(upsert) if upsert is not None else ""
+    head_html = _chat_head_html(session, len(messages)) if messages else ""
+    nav_html = _chat_nav_html(messages) if messages else ""
+    if not messages:
+        body = _chat_empty_html()
+    elif len(messages) == 1 and upsert_html:
+        # 空会话收到第一条消息时只需这一条即可完成原地初始化。
+        body = head_html + upsert_html + nav_html
+    else:
+        body = ""
+    return r"""
+(function () {
+    var wrap = document.querySelector(".wrap");
+    var root = document.documentElement;
+    if (!wrap || root.classList.contains("doc-ui") || root.classList.contains("mm-ui")) {
+        return false;
+    }
+    var total = %d;
+    var upsertId = %s;
+    var removeId = %s;
+    var focusId = %s;
+    var fullBody = %s;
+    var headHtml = %s;
+    var navHtml = %s;
+    var upsertHtml = %s;
+
+    if (!total) {
+        wrap.innerHTML = fullBody;
+        root.classList.remove("chat-ui");
+        return true;
+    }
+
+    var head = wrap.querySelector(".page-head");
+    if (!head) {
+        // 空会话收到第一条消息，或页面状态与数据库不一致时，一次性重建
+        // 聊天正文，但仍不触发 WebEngine 导航。
+        if (!fullBody) return false;
+        wrap.innerHTML = fullBody;
+    } else {
+        head.outerHTML = headHtml;
+        if (removeId !== null) {
+            var removed = document.getElementById("msg-" + removeId);
+            if (removed) removed.remove();
+        }
+        if (upsertId !== null && upsertHtml) {
+            var current = document.getElementById("msg-" + upsertId);
+            if (current) {
+                current.outerHTML = upsertHtml;
+            } else {
+                var oldNav = wrap.querySelector(".chat-nav");
+                if (oldNav) oldNav.insertAdjacentHTML("beforebegin", upsertHtml);
+                else wrap.insertAdjacentHTML("beforeend", upsertHtml);
+            }
+        }
+        var nav = wrap.querySelector(".chat-nav");
+        if (nav) nav.remove();
+        if (navHtml) wrap.insertAdjacentHTML("beforeend", navHtml);
+    }
+
+    root.classList.add("chat-ui");
+    if (window.__refreshChatNav) window.__refreshChatNav();
+    var target = focusId !== null ? document.getElementById("msg-" + focusId) : null;
+    if (target && window.katex) {
+        target.querySelectorAll(".tex-display, .tex-inline").forEach(function (node) {
+            katex.render(node.textContent, node, {
+                displayMode: node.classList.contains("tex-display"),
+                throwOnError: false
+            });
+        });
+    }
+    if (target) {
+        target.scrollIntoView({ block: "center" });
+        target.classList.add("flash");
+        setTimeout(function () { target.classList.remove("flash"); }, 1200);
+    }
+    return true;
+})()
+""" % (
+        len(messages),
+        "null" if upsert_id is None else int(upsert_id),
+        "null" if remove_id is None else int(remove_id),
+        "null" if focus_id is None else int(focus_id),
+        json.dumps(body),
+        json.dumps(head_html),
+        json.dumps(nav_html),
+        json.dumps(upsert_html),
+    )
+
+
+def build_chat_page(session: dict, messages: list, highlight_id=None) -> str:
+    if not messages:
+        return _page(
+            _chat_empty_html(), scroll_bottom=False, extra_js=_CHAT_NAV_JS
+        )
+
+    head = _chat_head_html(session, len(messages))
     body = head + "".join(_message_html(m) for m in messages) + _chat_nav_html(messages)
     extra = _CHAT_NAV_JS
     if highlight_id:
@@ -767,7 +911,42 @@ def build_mindmap_page(mindmap: dict, nodes: list, view=None, edges=None):
     return page, to_save
 
 
-def export_markdown(session: dict, messages: list, image_rel: str = "") -> str:
+def _embedded_image_uri(message: dict) -> str:
+    name = message.get("content") or ""
+    asset_name = Path(name).name
+    path = Path(IMAGES_DIR, asset_name)
+    if not asset_name or not path.is_file():
+        raise OSError(f"图片文件不存在：{name}")
+    raw = path.read_bytes()
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime = "image/png"
+    elif raw.startswith(b"\xff\xd8\xff"):
+        mime = "image/jpeg"
+    elif raw.startswith((b"GIF87a", b"GIF89a")):
+        mime = "image/gif"
+    elif raw.startswith(b"RIFF") and raw[8:12] == b"WEBP":
+        mime = "image/webp"
+    elif raw.startswith(b"BM"):
+        mime = "image/bmp"
+    else:
+        mime = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+            ".bmp": "image/bmp",
+        }.get(path.suffix.lower(), "image/png")
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def export_markdown(
+    session: dict,
+    messages: list,
+    image_rel: str = "",
+    *,
+    embed_images: bool = False,
+) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
         f"# {session['name']}",
@@ -784,8 +963,14 @@ def export_markdown(session: dict, messages: list, image_rel: str = "") -> str:
         lines.append("")
         if m.get("kind") == "image":
             name = m.get("content") or ""
-            if image_rel and name:
-                href = f"{image_rel.rstrip('/')}/{name}"
+            if embed_images:
+                href = _embedded_image_uri(m)
+            elif image_rel and name:
+                # 导出时图片会复制到 Markdown 旁的资源目录。只使用文件名可避免
+                # 数据库中的旧路径逃出目标目录；URL 转义保证空格/中文名也能显示。
+                asset_name = Path(name).name
+                rel = image_rel.replace("\\", "/").rstrip("/")
+                href = f"{quote(rel, safe='/')}/{quote(asset_name)}"
             else:
                 href = _image_uri(m)
             lines.append(f"![图片]({href})")
